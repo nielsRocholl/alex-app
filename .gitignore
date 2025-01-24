@@ -169,3 +169,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+.streamlit
+account_key.json
+client_secret.json
+.env

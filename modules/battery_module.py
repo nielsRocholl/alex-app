@@ -1,8 +1,8 @@
 
 import pandas as pd
 from typing import Dict, Tuple
-from kenter_module import *
-from entsoe_module import *
+from modules.kenter_module import *
+from modules.entsoe_module import *
 
 class BatterySavingsCalculator:
     """Calculator for potential savings using battery storage system."""
