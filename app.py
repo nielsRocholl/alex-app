@@ -1,31 +1,20 @@
 import streamlit as st
-import os
 import plotly.graph_objects as go
 from modules.kenter_module import get_kenter_data
 from modules.entsoe_module import get_energy_prices
 from modules.battery_module import BatterySavingsCalculator
 from utils.utils import *
 from auth.authenticator import Authenticator
-from dotenv import load_dotenv
 
-
-load_dotenv()
 
 def main():
     st.title("Energy Usage and Price Analysis")
     
     # Sidebar authentication
     with st.sidebar:
-        allowed_users = os.getenv("ALLOWED_USERS").split(",")
-        authenticator = Authenticator(
-            allowed_users=allowed_users,
-            token_key=os.getenv("TOKEN_KEY"),
-            secret_path="client_secret.json",
-            redirect_uri="http://localhost:8501",
-        )
+        authenticator = Authenticator()
         authenticator.check_auth()
         authenticator.login()
-        
         if st.session_state["connected"]:
             st.write(f"Logged in as: {st.session_state['user_info'].get('email')}")
             if st.button("Log out", use_container_width=True):

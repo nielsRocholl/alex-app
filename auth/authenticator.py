@@ -7,36 +7,42 @@ from auth.token_manager import AuthTokenManager
 class Authenticator:
     def __init__(
         self,
-        allowed_users: list,
-        secret_path: str,
-        redirect_uri: str,
-        token_key: str,
         cookie_name: str = "auth_jwt",
         token_duration_days: int = 1,
     ):
         st.session_state["connected"] = st.session_state.get("connected", False)
-        self.allowed_users = allowed_users
-        self.secret_path = secret_path
-        self.redirect_uri = redirect_uri
+        self.allowed_users = st.secrets["app"]["allowed_users"]
+        self.token_key = st.secrets["app"]["token_key"]
+        self.client_config = {
+            "web": {
+                "client_id": st.secrets["google"]["client_id"],
+                "project_id": st.secrets["google"]["project_id"],
+                "auth_uri": st.secrets["google"]["auth_uri"],
+                "token_uri": st.secrets["google"]["token_uri"],
+                "auth_provider_x509_cert_url": st.secrets["google"]["auth_provider_x509_cert_url"],
+                "client_secret": st.secrets["google"]["client_secret"],
+                "redirect_uris": st.secrets["google"]["redirect_uris"]
+            }
+        }
         self.auth_token_manager = AuthTokenManager(
             cookie_name=cookie_name,
-            token_key=token_key,
+            token_key=self.token_key,
             token_duration_days=token_duration_days,
         )
         self.cookie_name = cookie_name
 
     def _initialize_flow(self) -> google_auth_oauthlib.flow.Flow:
-        flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
-            self.secret_path,
+        flow = google_auth_oauthlib.flow.Flow.from_client_config(
+            self.client_config,
             scopes=[
                 "openid",
                 "https://www.googleapis.com/auth/userinfo.profile",
                 "https://www.googleapis.com/auth/userinfo.email",
             ],
-            redirect_uri=self.redirect_uri,
+            redirect_uri=self.client_config["web"]["redirect_uris"][0]
         )
         return flow
-
+    
     def get_auth_url(self) -> str:
         flow = self._initialize_flow()
         auth_url, _ = flow.authorization_url(
