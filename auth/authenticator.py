@@ -31,6 +31,18 @@ class Authenticator:
         )
         self.cookie_name = cookie_name
 
+    # def _initialize_flow(self) -> google_auth_oauthlib.flow.Flow:
+    #     flow = google_auth_oauthlib.flow.Flow.from_client_config(
+    #         self.client_config,
+    #         scopes=[
+    #             "openid",
+    #             "https://www.googleapis.com/auth/userinfo.profile",
+    #             "https://www.googleapis.com/auth/userinfo.email",
+    #         ],
+    #         redirect_uri=self.client_config["web"]["redirect_uris"][0]
+    #     )
+    #     return flow
+
     def _initialize_flow(self) -> google_auth_oauthlib.flow.Flow:
         flow = google_auth_oauthlib.flow.Flow.from_client_config(
             self.client_config,
@@ -39,7 +51,10 @@ class Authenticator:
                 "https://www.googleapis.com/auth/userinfo.profile",
                 "https://www.googleapis.com/auth/userinfo.email",
             ],
-            redirect_uri=self.client_config["web"]["redirect_uris"][0]
+            # Use the deployed URL when not on localhost
+            redirect_uri=("https://icarus.streamlit.app" 
+                        if st.get_option("server.address") != "localhost"
+                        else "http://localhost:8501")
         )
         return flow
     
