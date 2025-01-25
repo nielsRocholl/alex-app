@@ -1,14 +1,14 @@
 from datetime import datetime
 import plotly.graph_objects as go
 import pandas as pd
-import os
+# import os
 
 
 
-def is_running_on_localhost():
-    host = os.getenv("STREAMLIT_SERVER_ADDRESS", "localhost")
-    port = os.getenv("STREAMLIT_SERVER_PORT", "8501")
-    return host == "localhost" and port == "8501"
+# def is_running_on_localhost():
+#     host = os.getenv("STREAMLIT_SERVER_ADDRESS", "localhost")
+#     port = os.getenv("STREAMLIT_SERVER_PORT", "8501")
+#     return host == "localhost" and port == "8501"
 
 
 def validate_dates(start_date, end_date):

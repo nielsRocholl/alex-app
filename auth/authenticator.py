@@ -2,7 +2,6 @@ import streamlit as st
 import google_auth_oauthlib.flow
 from googleapiclient.discovery import build
 from auth.token_manager import AuthTokenManager
-from utils.utils import is_running_on_localhost
 
 
 class Authenticator:
@@ -32,18 +31,6 @@ class Authenticator:
         )
         self.cookie_name = cookie_name
 
-    # def _initialize_flow(self) -> google_auth_oauthlib.flow.Flow:
-    #     flow = google_auth_oauthlib.flow.Flow.from_client_config(
-    #         self.client_config,
-    #         scopes=[
-    #             "openid",
-    #             "https://www.googleapis.com/auth/userinfo.profile",
-    #             "https://www.googleapis.com/auth/userinfo.email",
-    #         ],
-    #         redirect_uri=self.client_config["web"]["redirect_uris"][0]
-    #     )
-    #     return flow
-
     def _initialize_flow(self) -> google_auth_oauthlib.flow.Flow:
         flow = google_auth_oauthlib.flow.Flow.from_client_config(
             self.client_config,
@@ -52,13 +39,10 @@ class Authenticator:
                 "https://www.googleapis.com/auth/userinfo.profile",
                 "https://www.googleapis.com/auth/userinfo.email",
             ],
-            # Use the deployed URL when not on localhost
-            redirect_uri=(self.client_config["web"]["redirect_uris"][0]
-                        if is_running_on_localhost()
-                        else self.client_config["web"]["redirect_uris"][1])
+            redirect_uri=self.client_config["web"]["redirect_uris"][0]
         )
         return flow
-    
+
     def get_auth_url(self) -> str:
         flow = self._initialize_flow()
         auth_url, _ = flow.authorization_url(
