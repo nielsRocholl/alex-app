@@ -1,5 +1,4 @@
 import streamlit as st
-import plotly.graph_objects as go
 from modules.kenter_module import get_kenter_data
 from modules.entsoe_module import get_energy_prices
 from modules.battery_module import BatterySavingsCalculator
