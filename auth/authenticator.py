@@ -2,6 +2,7 @@ import streamlit as st
 import google_auth_oauthlib.flow
 from googleapiclient.discovery import build
 from auth.token_manager import AuthTokenManager
+from utils.utils import is_running_on_localhost
 
 
 class Authenticator:
@@ -52,9 +53,9 @@ class Authenticator:
                 "https://www.googleapis.com/auth/userinfo.email",
             ],
             # Use the deployed URL when not on localhost
-            redirect_uri=("https://icarus.streamlit.app" 
-                        if st.get_option("server.address") != "localhost"
-                        else "http://localhost:8501")
+            redirect_uri=(self.client_config["web"]["redirect_uris"][0]
+                        if is_running_on_localhost()
+                        else self.client_config["web"]["redirect_uris"][1])
         )
         return flow
     
