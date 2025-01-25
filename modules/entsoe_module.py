@@ -1,7 +1,6 @@
 import pandas as pd
 from entsoe import EntsoePandasClient
 from datetime import datetime
-import pytz
 
 class EntsoeAPI:
     """Simple ENTSO-E API client for retrieving energy prices."""
