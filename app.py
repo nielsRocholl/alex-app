@@ -5,30 +5,42 @@ from modules.battery_module import BatterySavingsCalculator
 from utils.utils import *
 from auth.authenticator import Authenticator
 
+# Initialize the Authenticator
+allowed_users = st.secrets["ALLOWED_USERS"].split(",")
+authenticator = Authenticator(
+    allowed_users=allowed_users,
+    token_key=st.secrets["TOKEN_KEY"],
+    client_secret=st.secrets["CLIENT_SECRET"],
+    redirect_uri="https://g-signin.streamlit.app/"  # Ensure this matches Google Cloud Console
+)
 
 def main():
     st.title("Energy Usage and Price Analysis")
-    
-    # Sidebar authentication
+
+    # Check authentication status
+    authenticator.check_auth()
+
+    # Show login/logout buttons in the sidebar
     with st.sidebar:
-        authenticator = Authenticator()
-        authenticator.check_auth()
-        authenticator.login()
-        if st.session_state["connected"]:
-            st.write(f"Logged in as: {st.session_state['user_info'].get('email')}")
+        if st.session_state.get("connected"):
             if st.button("Log out", use_container_width=True):
                 authenticator.logout()
                 st.rerun()
+        else:
+            auth_url = authenticator.get_auth_url()
+            st.link_button("Login with Google", auth_url, use_container_width=True)
 
-    # Only show main content if authenticated
+    # Only show the main content if the user is authenticated
     if st.session_state.get("connected"):
+        st.write(f"Welcome! {st.session_state['user_info'].get('email')}")
+
         # Date inputs
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("Start Date")
         with col2:
             end_date = st.date_input("End Date")
-    
+
         # Add fetch button
         if st.button("Fetch Data"):
             if start_date and end_date:
@@ -102,7 +114,8 @@ def main():
         else:
             st.info("Select dates and click 'Fetch Data' to view the analysis")
     else:
-        st.info("Please log in to access the application")
+        st.warning("Please log in to access the app.")
+
 
 if __name__ == "__main__":
     main()
