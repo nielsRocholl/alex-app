@@ -1,3 +1,5 @@
+import time
+
 import streamlit as st
 import google_auth_oauthlib.flow
 from googleapiclient.discovery import build
@@ -7,39 +9,34 @@ from auth.token_manager import AuthTokenManager
 class Authenticator:
     def __init__(
         self,
+        allowed_users: list,
+        client_secret: dict,  # Changed from secret_path
+        redirect_uri: str,
+        token_key: str,
         cookie_name: str = "auth_jwt",
         token_duration_days: int = 1,
     ):
         st.session_state["connected"] = st.session_state.get("connected", False)
-        self.allowed_users = st.secrets["app"]["allowed_users"]
-        self.token_key = st.secrets["app"]["token_key"]
-        self.client_config = {
-            "web": {
-                "client_id": st.secrets["google"]["client_id"],
-                "project_id": st.secrets["google"]["project_id"],
-                "auth_uri": st.secrets["google"]["auth_uri"],
-                "token_uri": st.secrets["google"]["token_uri"],
-                "auth_provider_x509_cert_url": st.secrets["google"]["auth_provider_x509_cert_url"],
-                "client_secret": st.secrets["google"]["client_secret"],
-                "redirect_uris": st.secrets["google"]["redirect_uris"]
-            }
-        }
+        self.allowed_users = allowed_users
+        self.redirect_uri = redirect_uri
         self.auth_token_manager = AuthTokenManager(
             cookie_name=cookie_name,
-            token_key=self.token_key,
+            token_key=token_key,
             token_duration_days=token_duration_days,
         )
         self.cookie_name = cookie_name
+        self.client_secret = client_secret
+
 
     def _initialize_flow(self) -> google_auth_oauthlib.flow.Flow:
         flow = google_auth_oauthlib.flow.Flow.from_client_config(
-            self.client_config,
+            self.client_secret,
             scopes=[
                 "openid",
                 "https://www.googleapis.com/auth/userinfo.profile",
                 "https://www.googleapis.com/auth/userinfo.email",
             ],
-            redirect_uri=self.client_config["web"]["redirect_uris"][0]
+            redirect_uri=self.redirect_uri,
         )
         return flow
 
@@ -53,12 +50,13 @@ class Authenticator:
     def login(self):
         if not st.session_state["connected"]:
             auth_url = self.get_auth_url()
-            st.link_button("login with google", auth_url,  use_container_width=True)
-
+            st.link_button("login with google", auth_url)
 
     def check_auth(self):
-        # If already connected, don't show the toast repeatedly
         if st.session_state.get("connected"):
+            if not st.session_state.get("auth_toast_shown"):
+                st.toast(":green[User authenticated successfully!]")
+                st.session_state.auth_toast_shown = True
             return
 
         if st.session_state.get("logout"):
@@ -67,16 +65,19 @@ class Authenticator:
 
         token = self.auth_token_manager.get_decoded_token()
         if token is not None:
+            st.query_params.clear()
             st.session_state["connected"] = True
             st.session_state["user_info"] = {
                 "email": token["email"],
                 "oauth_id": token["oauth_id"],
             }
-            st.rerun()  # Update session state
+            st.rerun()  # update session state
+
+        time.sleep(1)  # important for the token to be set correctly
 
         auth_code = st.query_params.get("code")
+        st.query_params.clear()
         if auth_code:
-            st.query_params.clear()
             flow = self._initialize_flow()
             flow.fetch_token(code=auth_code)
             creds = flow.credentials
@@ -87,15 +88,17 @@ class Authenticator:
             email = user_info.get("email")
 
             if email in self.allowed_users:
+                # Reset the toast flag before setting the token and updating session state
+                st.session_state.auth_toast_shown = False  # Reset on new login
                 self.auth_token_manager.set_token(email, oauth_id)
                 st.session_state["connected"] = True
                 st.session_state["user_info"] = {
                     "oauth_id": oauth_id,
                     "email": email,
                 }
-                st.toast(":green[user is authenticated]")  # Only show during actual login
             else:
                 st.toast(":red[access denied: Unauthorized user]")
+                # no rerun
 
     def logout(self):
         st.session_state["logout"] = True
