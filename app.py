@@ -11,7 +11,7 @@ authenticator = Authenticator(
     allowed_users=allowed_users,
     token_key=st.secrets["TOKEN_KEY"],
     client_secret=st.secrets["CLIENT_SECRET"],
-    redirect_uri="https://g-signin.streamlit.app/"  # Ensure this matches Google Cloud Console
+    redirect_uri="https://nielsrocholl.streamlit.app/"  # Ensure this matches Google Cloud Console
 )
 
 def main():
