@@ -2,16 +2,17 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 import pytz
-from typing import Dict, List, Literal
+from typing import Literal, Dict, List
+import streamlit as st
 
 class KenterAPI:
     """Simple Kenter API client for retrieving energy data."""
     
-    def __init__(self):
+    def __init__(self, connection_id=None, metering_point=None):
         self._client_id = "api_132304_f4a7ac"
-        self._client_secret = "x*Dkvc!YU[]ZZejAk1KL*pV3"
-        self._connection_id = "871687110003716798"
-        self._metering_point = "00064782"
+        self._client_secret = st.secrets["KENTER_CLIENT_SECRET"]
+        self._connection_id = connection_id
+        self._metering_point = metering_point
         self._base_url = "https://api.kenter.nu/meetdata/v2"
         self._token_url = "https://login.kenter.nu/connect/token"
         self._token = None
@@ -41,10 +42,24 @@ class KenterAPI:
         response = requests.get(url, headers={'Authorization': f'Bearer {self._token}'})
         response.raise_for_status()
         return response.json()
+    
+    def get_meter_list(self) -> list:
+        """Retrieve all available connections and metering points."""
+        if not self._token:
+            self._token = self._get_token()
+        
+        url = f"{self._base_url}/meters"
+        response = requests.get(url, headers={'Authorization': f'Bearer {self._token}'})
+        response.raise_for_status()
+        
+        return response.json()
+
 
 def get_kenter_data(
     start_date: str, 
     end_date: str, 
+    connection_id: str,  # New parameter
+    metering_point: str,  # New parameter
     interval: Literal['15min', '1h'] = '15min'
 ) -> pd.DataFrame:
     """
@@ -78,7 +93,7 @@ def get_kenter_data(
         raise ValueError("Date range cannot exceed 1 year")
         
     # Initialize API and data collection
-    api = KenterAPI()
+    api = KenterAPI(connection_id=connection_id, metering_point=metering_point)
     data = []
     channels = {'16180': 'supply', '16280': 'return'}
     current_date = start
