@@ -170,7 +170,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-.streamlit
+.streamlit/secrets.toml
 account_key.json
 client_secret.json
 .env
