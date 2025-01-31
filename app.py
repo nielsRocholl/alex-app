@@ -1,9 +1,16 @@
 import streamlit as st
-from modules.kenter_module import get_kenter_data, KenterAPI
+from modules.kenter_module import get_kenter_data
 from modules.entsoe_module import get_energy_prices
 from modules.battery_module import BatterySavingsCalculator
 from utils.utils import *
 from auth.authenticator import Authenticator
+
+# Set page configuration
+st.set_page_config(
+    page_title="Energy Analyzer",
+    page_icon="⚡",
+    layout="wide"
+)
 
 # Initialize the Authenticator
 allowed_users = st.secrets["ALLOWED_USERS"].split(",")
@@ -11,37 +18,11 @@ authenticator = Authenticator(
     allowed_users=allowed_users,
     token_key=st.secrets["TOKEN_KEY"],
     client_secret=st.secrets["CLIENT_SECRET"],
-    redirect_uri="https://nielsrocholl.streamlit.app/"  # "http://localhost:8501"
+    redirect_uri= "https://nielsrocholl.streamlit.app/" #"http://localhost:8501"
 )
 
-def get_meter_hierarchy():
-    """Retrieve and cache meter structure with connection -> metering points mapping"""
-    if 'meter_hierarchy' not in st.session_state:
-        try:
-            api = KenterAPI()
-            meter_data = api.get_meter_list()
-            hierarchy = {}
-            
-            for connection in meter_data:
-                conn_id = connection.get('connectionId')
-                if not conn_id:
-                    continue
-                
-                hierarchy[conn_id] = []
-                for mp in connection.get('meteringPoints', []):
-                    mp_id = mp.get('meteringPointId')
-                    if mp_id:
-                        hierarchy[conn_id].append(mp_id)
-            
-            st.session_state.meter_hierarchy = hierarchy
-        except Exception as e:
-            st.error(f"Error fetching meter data: {str(e)}")
-            st.session_state.meter_hierarchy = {}
-    
-    return st.session_state.meter_hierarchy
-
 def main():
-    st.title("Energy Usage and Price Analysis")
+    st.title("⚡ Energy Analyzer")
     authenticator.check_auth()
 
     # Show login/logout buttons in the sidebar
@@ -51,29 +32,38 @@ def main():
                 authenticator.logout()
                 st.rerun()
             
-            # Meter selection only when authenticated
-            st.subheader("Meter Selection")
+            st.subheader("Analysis Settings")
             
-            # Get meter hierarchy
+            # Plot selection
+            selected_plots = st.multiselect(
+                "Choose visualizations to display:",
+                options=["Energy Flow & Prices", "Cost Savings"],
+                default=["Cost Savings"],
+                help="Select which charts to show in the analysis"
+            )
+            
+            # Meter selection
+            st.markdown("---")
+            st.subheader("Meter Selection")
             meter_hierarchy = get_meter_hierarchy()
             
             # Connection ID selection
             connection_ids = list(meter_hierarchy.keys())
             selected_conn = st.selectbox(
-                "Select Connection ID",
+                "Connection Point",
                 options=connection_ids,
                 index=0,
-                help="Select the connection point for your facility"
+                help="Select your facility's connection point"
             )
             
-            # Metering point selection based on connection
+            # Metering point selection
             if selected_conn:
                 metering_points = meter_hierarchy.get(selected_conn, [])
                 selected_meter = st.selectbox(
-                    "Select Metering Point",
+                    "Meter Device",
                     options=metering_points,
                     index=0,
-                    help="Select the specific meter for analysis"
+                    help="Select specific meter to analyze"
                 )
         else:
             auth_url = authenticator.get_auth_url()
@@ -81,17 +71,18 @@ def main():
 
     # Main content for authenticated users
     if st.session_state.get("connected"):
-        st.write(f"Welcome! {st.session_state['user_info'].get('email')}")
+        st.write(f"Welcome, {st.session_state['user_info'].get('email', 'User')}! 👋")
+        st.markdown("---")
 
         # Date inputs
         col1, col2 = st.columns(2)
         with col1:
-            start_date = st.date_input("Start Date")
+            start_date = st.date_input("Start Date", help="Select analysis start date")
         with col2:
-            end_date = st.date_input("End Date")
+            end_date = st.date_input("End Date", help="Select analysis end date")
 
         # Add fetch button
-        if st.button("Fetch Data"):
+        if st.button("🚀 Generate Report"):
             if start_date and end_date and selected_conn and selected_meter:
                 valid, error_message = validate_dates(start_date, end_date)
                 
@@ -100,8 +91,8 @@ def main():
                     return
                 
                 try:
-                    with st.spinner('Fetching data...'):
-                        # Pass selected meters to data fetch
+                    with st.spinner('Crunching numbers...'):
+                        # Fetch data
                         usage_df = get_kenter_data(
                             start_date.strftime('%Y-%m-%d'),
                             end_date.strftime('%Y-%m-%d'),
@@ -115,60 +106,88 @@ def main():
                             end_date.strftime('%Y-%m-%d')
                         )    
                         
-                        # Show usage and price plot
-                        st.subheader("Energy Usage and Prices")
-                        fig = create_plot(usage_df, price_df)
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # Calculate and show costs and savings
-                        st.subheader("Cost Analysis with Battery Storage")
-                        
-                        # Calculate daily costs
+                        # Calculate metrics
                         daily_costs = calculate_daily_costs(usage_df, price_df)
-                        
-                        # Calculate potential savings
                         battery_calculator = BatterySavingsCalculator()
                         savings = battery_calculator.arbitrage(usage_df, price_df)
                         
-                        # Create and show the cost savings plot
-                        cost_savings_fig = create_cost_savings_plot(daily_costs, savings)
-                        st.plotly_chart(cost_savings_fig, use_container_width=True)
+                        # Show selected visualizations
+                        if "Energy Flow & Prices" in selected_plots:
+                            st.markdown("## 📈 Energy Flow & Electricity Prices")
+                            fig = create_plot(usage_df, price_df)
+                            st.plotly_chart(fig, use_container_width=True)
+                            st.markdown("---")
                         
-                        # Show summary metrics
+                        if "Cost Savings" in selected_plots:
+                            st.markdown("## 💰 Battery Savings Potential")
+                            cost_savings_fig = create_cost_savings_plot(daily_costs, savings)
+                            st.plotly_chart(cost_savings_fig, use_container_width=True)
+                            st.markdown("---")
+                        
+                        # Key metrics cards - Revised Summary Statistics
+                        st.markdown("### 📊 Your Battery Savings Potential")
+
+                        # Calculate values
+                        total_costs = daily_costs['cost'].sum()
+                        total_savings = savings['savings'].sum()
+                        savings_percentage = (total_savings / total_costs * 100) if total_costs > 0 else 0
+                        total_supply = usage_df[usage_df['type'] == 'supply']['value'].sum()
+                        total_return = usage_df[usage_df['type'] == 'return']['value'].sum()
+                        avg_price = price_df['price'].mean()
+
+                        # Display metrics
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            total_costs = daily_costs['cost'].sum()
-                            st.metric("Total Costs (EUR)", f"{total_costs:.2f}")
+                            st.metric(
+                                "💰 Costs Without Battery", 
+                                f"€{total_costs:.2f}",
+                                help="Your total electricity bill if you DON'T have a battery"
+                            )
                         with col2:
-                            total_savings = savings['savings'].sum()
-                            st.metric("Potential Savings (EUR)", f"{total_savings:.2f}")
+                            st.metric(
+                                "🔋 Savings With Battery", 
+                                f"€{total_savings:.2f}",
+                                help="Money you COULD save by storing solar energy in a battery",
+                                delta=f"{savings_percentage:.1f}% savings"  # Adds visual emphasis
+                            )
                         with col3:
-                            savings_percentage = (total_savings / total_costs * 100) if total_costs > 0 else 0
-                            st.metric("Savings Percentage", f"{savings_percentage:.1f}%")
-                        
-                        # Show basic statistics
-                        st.subheader("Usage Statistics")
+                            st.metric(
+                                "☀️ Solar Energy Used", 
+                                f"{total_return:.1f} kWh",
+                                help="Clean energy produced by your solar panels"
+                            )
+
+                        # Energy statistics - Revised Energy Overview
+                        st.markdown("### ⚡ Energy Snapshot")
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            total_supply = usage_df[usage_df['type'] == 'supply']['value'].sum()
-                            st.metric("Total Supply (kWh)", f"{total_supply:.2f}")
+                            st.metric(
+                                "🔌 Grid Energy Used", 
+                                f"{total_supply:.1f} kWh",
+                                help="Energy bought from the power company"
+                            )
                         with col2:
-                            total_return = usage_df[usage_df['type'] == 'return']['value'].sum()
-                            st.metric("Total Return (kWh)", f"{total_return:.2f}")
+                            st.metric(
+                                "💡 Average Electricity Price", 
+                                f"€{avg_price:.3f}/kWh",
+                                help="Typical price you paid for grid energy"
+                            )
                         with col3:
-                            avg_price = price_df['price'].mean()
-                            st.metric("Average Price (EUR/kWh)", f"{avg_price:.4f}")
-                        
+                            st.metric(
+                                "📆 Period Covered", 
+                                f"{start_date.strftime('%d %b')} - {end_date.strftime('%d %b')}",
+                                help="Analysis time range"
+                            )
+                                                
                 except Exception as e:
                     if 'timestamp' in str(e):
-                        st.error("No data available for selected metering point")
+                        st.error("No data available for selected meter")
                     else:
-                        st.error(f"Error fetching data: {str(e)}")
+                        st.error(f"Error generating report: {str(e)}")
         else:
-            st.info("Select dates and click 'Fetch Data' to view the analysis")
+            st.info("Select dates and click 'Generate Report' to begin")
     else:
-        st.warning("Please log in to access the app.")
-
+        st.warning("🔒 Please log in to access the energy analyzer")
 
 if __name__ == "__main__":
     main()
