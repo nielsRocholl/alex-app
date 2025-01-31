@@ -1,12 +1,13 @@
 import pandas as pd
 from entsoe import EntsoePandasClient
 from datetime import datetime
+import streamlit as st
 
 class EntsoeAPI:
     """Simple ENTSO-E API client for retrieving energy prices."""
     
     def __init__(self):
-        self._api_key = "5ced150d-c502-4143-864b-321e875ae021"
+        self._api_key = st.secrets["ENTSOE_CLIENT_SECRET"]
         self._client = EntsoePandasClient(api_key=self._api_key)
 
     def _get_prices(self, start: datetime, end: datetime, country_code: str) -> pd.Series:

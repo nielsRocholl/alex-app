@@ -1,5 +1,5 @@
 import streamlit as st
-from modules.kenter_module import get_kenter_data
+from modules.kenter_module import get_kenter_data, KenterAPI
 from modules.entsoe_module import get_energy_prices
 from modules.battery_module import BatterySavingsCalculator
 from utils.utils import *
@@ -11,13 +11,37 @@ authenticator = Authenticator(
     allowed_users=allowed_users,
     token_key=st.secrets["TOKEN_KEY"],
     client_secret=st.secrets["CLIENT_SECRET"],
-    redirect_uri="https://nielsrocholl.streamlit.app/"  # Ensure this matches Google Cloud Console
+    redirect_uri="https://nielsrocholl.streamlit.app/"  # "http://localhost:8501"
 )
+
+def get_meter_hierarchy():
+    """Retrieve and cache meter structure with connection -> metering points mapping"""
+    if 'meter_hierarchy' not in st.session_state:
+        try:
+            api = KenterAPI()
+            meter_data = api.get_meter_list()
+            hierarchy = {}
+            
+            for connection in meter_data:
+                conn_id = connection.get('connectionId')
+                if not conn_id:
+                    continue
+                
+                hierarchy[conn_id] = []
+                for mp in connection.get('meteringPoints', []):
+                    mp_id = mp.get('meteringPointId')
+                    if mp_id:
+                        hierarchy[conn_id].append(mp_id)
+            
+            st.session_state.meter_hierarchy = hierarchy
+        except Exception as e:
+            st.error(f"Error fetching meter data: {str(e)}")
+            st.session_state.meter_hierarchy = {}
+    
+    return st.session_state.meter_hierarchy
 
 def main():
     st.title("Energy Usage and Price Analysis")
-
-    # Check authentication status
     authenticator.check_auth()
 
     # Show login/logout buttons in the sidebar
@@ -26,11 +50,36 @@ def main():
             if st.button("Log out", use_container_width=True):
                 authenticator.logout()
                 st.rerun()
+            
+            # Meter selection only when authenticated
+            st.subheader("Meter Selection")
+            
+            # Get meter hierarchy
+            meter_hierarchy = get_meter_hierarchy()
+            
+            # Connection ID selection
+            connection_ids = list(meter_hierarchy.keys())
+            selected_conn = st.selectbox(
+                "Select Connection ID",
+                options=connection_ids,
+                index=0,
+                help="Select the connection point for your facility"
+            )
+            
+            # Metering point selection based on connection
+            if selected_conn:
+                metering_points = meter_hierarchy.get(selected_conn, [])
+                selected_meter = st.selectbox(
+                    "Select Metering Point",
+                    options=metering_points,
+                    index=0,
+                    help="Select the specific meter for analysis"
+                )
         else:
             auth_url = authenticator.get_auth_url()
             st.link_button("Login with Google", auth_url, use_container_width=True)
 
-    # Only show the main content if the user is authenticated
+    # Main content for authenticated users
     if st.session_state.get("connected"):
         st.write(f"Welcome! {st.session_state['user_info'].get('email')}")
 
@@ -43,8 +92,7 @@ def main():
 
         # Add fetch button
         if st.button("Fetch Data"):
-            if start_date and end_date:
-                # Validate dates
+            if start_date and end_date and selected_conn and selected_meter:
                 valid, error_message = validate_dates(start_date, end_date)
                 
                 if not valid:
@@ -53,10 +101,12 @@ def main():
                 
                 try:
                     with st.spinner('Fetching data...'):
-                        # Get data
+                        # Pass selected meters to data fetch
                         usage_df = get_kenter_data(
                             start_date.strftime('%Y-%m-%d'),
                             end_date.strftime('%Y-%m-%d'),
+                            connection_id=selected_conn,
+                            metering_point=selected_meter,
                             interval='15min'
                         )
                         
@@ -110,7 +160,10 @@ def main():
                             st.metric("Average Price (EUR/kWh)", f"{avg_price:.4f}")
                         
                 except Exception as e:
-                    st.error(f"Error fetching data: {str(e)}")
+                    if 'timestamp' in str(e):
+                        st.error("No data available for selected metering point")
+                    else:
+                        st.error(f"Error fetching data: {str(e)}")
         else:
             st.info("Select dates and click 'Fetch Data' to view the analysis")
     else:
