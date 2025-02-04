@@ -48,7 +48,7 @@ def calculate_daily_costs(usage_df, price_df):
     return daily_costs
 
 def get_meter_hierarchy():
-    """Retrieve and cache meter structure with connection -> metering points mapping"""
+    """Retrieve and cache meter structure with formatted connection name -> (connection_id, main_metering_point) mapping"""
     if 'meter_hierarchy' not in st.session_state:
         try:
             api = KenterAPI()
@@ -59,13 +59,28 @@ def get_meter_hierarchy():
                 conn_id = connection.get('connectionId')
                 if not conn_id:
                     continue
-                
-                hierarchy[conn_id] = []
+
+                # Find main metering point
+                main_mp = None
                 for mp in connection.get('meteringPoints', []):
-                    mp_id = mp.get('meteringPointId')
-                    if mp_id:
-                        hierarchy[conn_id].append(mp_id)
-            
+                    if mp.get('meteringPointType') == 'OP' and mp.get('relatedMeteringPointId') is None:
+                        main_mp = mp.get('meteringPointId')
+                        break  # Found main point
+
+                # Get connection name details from first metering point's masterData
+                connection_name = conn_id  # default if no name found
+                if connection.get('meteringPoints'):
+                    master_data = connection['meteringPoints'][0].get('masterData', [{}])[0]
+                    bp_code = master_data.get('bpCode', '')
+                    bp_name = master_data.get('bpName', '')
+                    if bp_code and bp_name:
+                        connection_name = f"{bp_code} - {bp_name}"
+
+                hierarchy[connection_name] = {
+                    'connection_id': conn_id,
+                    'main_meter': main_mp
+                }
+
             st.session_state.meter_hierarchy = hierarchy
         except Exception as e:
             st.error(f"Error fetching meter data: {str(e)}")

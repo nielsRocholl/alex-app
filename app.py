@@ -18,7 +18,7 @@ authenticator = Authenticator(
     allowed_users=allowed_users,
     token_key=st.secrets["TOKEN_KEY"],
     client_secret=st.secrets["CLIENT_SECRET"],
-    redirect_uri= "https://nielsrocholl.streamlit.app/" #"http://localhost:8501"
+    redirect_uri= "https://nielsrocholl.streamlit.app/"  #"http://localhost:8501"
 )
 
 def main():
@@ -42,29 +42,24 @@ def main():
                 help="Select which charts to show in the analysis"
             )
             
-            # Meter selection
             st.markdown("---")
             st.subheader("Meter Selection")
             meter_hierarchy = get_meter_hierarchy()
-            
-            # Connection ID selection
-            connection_ids = list(meter_hierarchy.keys())
-            selected_conn = st.selectbox(
+
+            # Connection selection with formatted names
+            connection_names = list(meter_hierarchy.keys())
+            selected_conn_name = st.selectbox(
                 "Connection Point",
-                options=connection_ids,
+                options=connection_names,
                 index=0,
                 help="Select your facility's connection point"
             )
-            
-            # Metering point selection
-            if selected_conn:
-                metering_points = meter_hierarchy.get(selected_conn, [])
-                selected_meter = st.selectbox(
-                    "Meter Device",
-                    options=metering_points,
-                    index=0,
-                    help="Select specific meter to analyze"
-                )
+
+            # Get connection details automatically
+            if selected_conn_name:
+                conn_details = meter_hierarchy[selected_conn_name]
+                connection_id = conn_details['connection_id']
+                main_meter = conn_details['main_meter']
         else:
             auth_url = authenticator.get_auth_url()
             st.link_button("Login with Google", auth_url, use_container_width=True)
@@ -83,7 +78,7 @@ def main():
 
         # Add fetch button
         if st.button("🚀 Generate Report"):
-            if start_date and end_date and selected_conn and selected_meter:
+            if start_date and end_date and selected_conn_name:
                 valid, error_message = validate_dates(start_date, end_date)
                 
                 if not valid:
@@ -96,8 +91,8 @@ def main():
                         usage_df = get_kenter_data(
                             start_date.strftime('%Y-%m-%d'),
                             end_date.strftime('%Y-%m-%d'),
-                            connection_id=selected_conn,
-                            metering_point=selected_meter,
+                            connection_id=connection_id,  # From the selected connection details
+                            metering_point=main_meter,    # Automatically use main meter
                             interval='15min'
                         )
                         
