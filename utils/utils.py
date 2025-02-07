@@ -88,6 +88,12 @@ def get_meter_hierarchy():
     
     return st.session_state.meter_hierarchy
 
+# Function to clear report state when connection changes
+def clear_report_state():
+    st.session_state.show_report = False
+    if 'report_data' in st.session_state:
+        del st.session_state.report_data
+
 ### PLOTTING FUNCTIONS ###
 
 def create_plot(usage_df, price_df):
