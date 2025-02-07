@@ -71,13 +71,14 @@ class BatterySavingsCalculator:
                 usable_energy = min(remaining_surplus, row['value'])
                 daily_savings  += usable_energy * row['price']
                 remaining_surplus -= usable_energy
-                # Append daily savings to the DataFrame
-                if daily_savings > 0:  # Only append if there are actual savings
-                    new_row = pd.DataFrame({
-                        'timestamp': [date],
-                        'savings': [daily_savings]
-                    })
-                    total_savings = pd.concat([total_savings, new_row], ignore_index=True)
+            
+            # Only append the final daily savings once per day
+            if daily_savings > 0:  # Only append if there are actual savings
+                new_row = pd.DataFrame({
+                    'timestamp': [date],
+                    'savings': [daily_savings]
+                })
+                total_savings = pd.concat([total_savings, new_row], ignore_index=True)
         
         return total_savings
 
