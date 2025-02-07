@@ -4,6 +4,7 @@ from modules.entsoe_module import get_energy_prices
 from modules.battery_module import BatterySavingsCalculator
 from utils.utils import *
 from auth.authenticator import Authenticator
+from datetime import datetime
 
 # Set page configuration
 st.set_page_config(
@@ -18,7 +19,7 @@ authenticator = Authenticator(
     allowed_users=allowed_users,
     token_key=st.secrets["TOKEN_KEY"],
     client_secret=st.secrets["CLIENT_SECRET"],
-    redirect_uri= "https://nielsrocholl.streamlit.app/"  #"http://localhost:8501"
+    redirect_uri= "https://nielsrocholl.streamlit.app/" #"http://localhost:8501"
 )
 
 def main():
@@ -52,7 +53,8 @@ def main():
                 "Connection Point",
                 options=connection_names,
                 index=0,
-                help="Select your facility's connection point"
+                help="Select your facility's connection point",
+                on_change=clear_report_state
             )
 
             # Get connection details automatically
@@ -76,13 +78,18 @@ def main():
         with col2:
             end_date = st.date_input("End Date", help="Select analysis end date")
 
-        # Add fetch button
+        # Initialize the show_report state if it doesn't exist
+        if 'show_report' not in st.session_state:
+            st.session_state.show_report = False
+
+        # Add generate report button
         if st.button("🚀 Generate Report"):
+            st.session_state.show_report = True
             if start_date and end_date and selected_conn_name:
                 valid, error_message = validate_dates(start_date, end_date)
-                
                 if not valid:
                     st.error(error_message)
+                    st.session_state.show_report = False
                     return
                 
                 try:
@@ -91,8 +98,8 @@ def main():
                         usage_df = get_kenter_data(
                             start_date.strftime('%Y-%m-%d'),
                             end_date.strftime('%Y-%m-%d'),
-                            connection_id=connection_id,  # From the selected connection details
-                            metering_point=main_meter,    # Automatically use main meter
+                            connection_id=connection_id,
+                            metering_point=main_meter,
                             interval='15min'
                         )
                         
@@ -106,81 +113,110 @@ def main():
                         battery_calculator = BatterySavingsCalculator()
                         savings = battery_calculator.arbitrage(usage_df, price_df)
                         
-                        # Show selected visualizations
-                        if "Energy Flow & Prices" in selected_plots:
-                            st.markdown("## 📈 Energy Flow & Electricity Prices")
-                            fig = create_plot(usage_df, price_df)
-                            st.plotly_chart(fig, use_container_width=True)
-                            st.markdown("---")
+                        # Store results in session state
+                        st.session_state.report_data = {
+                            'usage_df': usage_df,
+                            'price_df': price_df,
+                            'daily_costs': daily_costs,
+                            'savings': savings,
+                            'generated_at': datetime.now()
+                        }
                         
-                        if "Cost Savings" in selected_plots:
-                            st.markdown("## 💰 Battery Savings Potential")
-                            cost_savings_fig = create_cost_savings_plot(daily_costs, savings)
-                            st.plotly_chart(cost_savings_fig, use_container_width=True)
-                            st.markdown("---")
-                        
-                        # Key metrics cards - Revised Summary Statistics
-                        st.markdown("### 📊 Your Battery Savings Potential")
-
-                        # Calculate values
-                        total_costs = daily_costs['cost'].sum()
-                        total_savings = savings['savings'].sum()
-                        savings_percentage = (total_savings / total_costs * 100) if total_costs > 0 else 0
-                        total_supply = usage_df[usage_df['type'] == 'supply']['value'].sum()
-                        total_return = usage_df[usage_df['type'] == 'return']['value'].sum()
-                        avg_price = price_df['price'].mean()
-
-                        # Display metrics
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric(
-                                "💰 Costs Without Battery", 
-                                f"€{total_costs:.2f}",
-                                help="Your total electricity bill if you DON'T have a battery"
-                            )
-                        with col2:
-                            st.metric(
-                                "🔋 Savings With Battery", 
-                                f"€{total_savings:.2f}",
-                                help="Money you COULD save by storing solar energy in a battery",
-                                delta=f"{savings_percentage:.1f}% savings"  # Adds visual emphasis
-                            )
-                        with col3:
-                            st.metric(
-                                "☀️ Solar Energy Used", 
-                                f"{total_return:.1f} kWh",
-                                help="Clean energy produced by your solar panels"
-                            )
-
-                        # Energy statistics - Revised Energy Overview
-                        st.markdown("### ⚡ Energy Snapshot")
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric(
-                                "🔌 Grid Energy Used", 
-                                f"{total_supply:.1f} kWh",
-                                help="Energy bought from the power company"
-                            )
-                        with col2:
-                            st.metric(
-                                "💡 Average Electricity Price", 
-                                f"€{avg_price:.3f}/kWh",
-                                help="Typical price you paid for grid energy"
-                            )
-                        with col3:
-                            st.metric(
-                                "📆 Period Covered", 
-                                f"{start_date.strftime('%d %b')} - {end_date.strftime('%d %b')}",
-                                help="Analysis time range"
-                            )
-                                                
                 except Exception as e:
                     if 'timestamp' in str(e):
                         st.error("No data available for selected meter")
                     else:
                         st.error(f"Error generating report: {str(e)}")
-        else:
+                    st.session_state.show_report = False
+                    st.session_state.pop('report_data', None)
+                    return
+
+        # Display report if show_report is True and we have data
+        if st.session_state.show_report and 'report_data' in st.session_state:
+            report_data = st.session_state.report_data
+            usage_df = report_data['usage_df']
+            price_df = report_data['price_df']
+            daily_costs = report_data['daily_costs']
+            savings = report_data['savings']
+            
+            # Show selected visualizations
+            if "Energy Flow & Prices" in selected_plots:
+                st.markdown("## 📈 Energy Flow & Electricity Prices")
+                fig = create_plot(usage_df, price_df)
+                st.plotly_chart(fig, use_container_width=True)
+                st.markdown("---")
+            
+            if "Cost Savings" in selected_plots:
+                st.markdown("## 💰 Battery Savings Potential")
+                cost_savings_fig = create_cost_savings_plot(daily_costs, savings)
+                st.plotly_chart(cost_savings_fig, use_container_width=True)
+                st.markdown("---")
+            
+            # Key metrics cards
+            st.markdown("### 📊 Your Battery Savings Potential")
+            total_costs = daily_costs['cost'].sum()
+            total_savings = savings['savings'].sum()
+            savings_percentage = (total_savings / total_costs * 100) if total_costs > 0 else 0
+            total_supply = usage_df[usage_df['type'] == 'supply']['value'].sum()
+            total_return = usage_df[usage_df['type'] == 'return']['value'].sum()
+            avg_price = price_df['price'].mean()
+
+            # Display metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    "💰 Costs Without Battery", 
+                    f"€{total_costs:.2f}",
+                    help="Your total electricity bill if you DON'T have a battery"
+                )
+            with col2:
+                st.metric(
+                    "🔋 Savings With Battery", 
+                    f"€{total_savings:.2f}",
+                    help="Money you COULD save by storing solar energy in a battery",
+                    delta=f"{savings_percentage:.1f}% savings"
+                )
+            with col3:
+                st.metric(
+                    "☀️ Solar Energy Used", 
+                    f"{total_return:.1f} kWh",
+                    help="Clean energy produced by your solar panels"
+                )
+
+            # Energy statistics
+            st.markdown("### ⚡ Energy Snapshot")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    "🔌 Grid Energy Used", 
+                    f"{total_supply:.1f} kWh",
+                    help="Energy bought from the power company"
+                )
+            with col2:
+                st.metric(
+                    "💡 Average Electricity Price", 
+                    f"€{avg_price:.3f}/kWh",
+                    help="Typical price you paid for grid energy"
+                )
+            with col3:
+                st.metric(
+                    "📆 Period Covered", 
+                    f"{start_date.strftime('%d %b')} - {end_date.strftime('%d %b')}",
+                    help="Analysis time range"
+                )
+            
+            # Add refresh button with timestamp
+            refresh_col, ts_col = st.columns([1,3])
+            with refresh_col:
+                if st.button("🔄 Refresh Results", help="Recalculate with latest data"):
+                    st.session_state.show_report = False
+                    st.rerun()
+            with ts_col:
+                st.caption(f"Last updated: {report_data['generated_at'].strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        elif not st.session_state.show_report:
             st.info("Select dates and click 'Generate Report' to begin")
+        
     else:
         st.warning("🔒 Please log in to access the energy analyzer")
 

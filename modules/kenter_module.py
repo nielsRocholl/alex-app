@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import pytz
 from typing import Literal, Dict, List
 import streamlit as st
+from functools import lru_cache
+import concurrent.futures
 
 class KenterAPI:
     """Simple Kenter API client for retrieving energy data."""
@@ -16,9 +18,15 @@ class KenterAPI:
         self._base_url = "https://api.kenter.nu/meetdata/v2"
         self._token_url = "https://login.kenter.nu/connect/token"
         self._token = None
+        self._token_expiry = None
+        self._cache = {}
 
     def _get_token(self) -> str:
-        """Get authentication token."""
+        """Get authentication token with caching."""
+        # Check if token is still valid (with 5 min margin)
+        if self._token and self._token_expiry and datetime.now() < self._token_expiry - timedelta(minutes=5):
+            return self._token
+
         payload = {
             'client_id': self._client_id,
             'client_secret': self._client_secret,
@@ -31,17 +39,34 @@ class KenterAPI:
             headers={'Content-Type': 'application/x-www-form-urlencoded'}
         )
         response.raise_for_status()
-        return response.json()['access_token']
+        token_data = response.json()
+        self._token = token_data['access_token']
+        # Set token expiry (usually 1 hour)
+        self._token_expiry = datetime.now() + timedelta(seconds=token_data.get('expires_in', 3600))
+        return self._token
 
+    @lru_cache(maxsize=128)
     def _get_day_data(self, date: datetime) -> dict:
-        """Get energy data for specific date."""
+        """Get energy data for specific date with caching."""
+        cache_key = f"{self._connection_id}_{self._metering_point}_{date.strftime('%Y-%m-%d')}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
         if not self._token:
             self._token = self._get_token()
             
         url = f"{self._base_url}/measurements/connections/{self._connection_id}/metering-points/{self._metering_point}/days/{date.year}/{date.month:02d}/{date.day:02d}"
         response = requests.get(url, headers={'Authorization': f'Bearer {self._token}'})
+        
+        # Handle token expiration
+        if response.status_code == 401:
+            self._token = self._get_token()
+            response = requests.get(url, headers={'Authorization': f'Bearer {self._token}'})
+            
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        self._cache[cache_key] = data
+        return data
     
     def get_meter_list(self) -> list:
         """Retrieve all available connections and metering points."""
@@ -92,46 +117,53 @@ def get_kenter_data(
     if (end - start).days > 365:
         raise ValueError("Date range cannot exceed 1 year")
         
-    # Initialize API and data collection
+    # Initialize API
     api = KenterAPI(connection_id=connection_id, metering_point=metering_point)
-    data = []
     channels = {'16180': 'supply', '16280': 'return'}
-    current_date = start
     
-    # Collect data
-    while current_date <= end:
-        day_data = api._get_day_data(current_date)
-        
-        for channel in day_data:
-            if channel['channelId'] in channels:
-                for measurement in channel.get('Measurements', []):
-                    timestamp = datetime.fromtimestamp(
-                        measurement['timestamp'], 
-                        tz=pytz.UTC
-                    ).astimezone(tz).replace(tzinfo=None)
-                    
-                    data.append({
-                        'timestamp': timestamp,
-                        'value': measurement['value'],
-                        'type': channels[channel['channelId']]
-                    })
-        
-        current_date += timedelta(days=1)
+    # Generate list of dates to fetch
+    dates = pd.date_range(start=start, end=end, freq='D')
     
-    # Create DataFrame
+    # Fetch data in parallel
+    data = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        future_to_date = {executor.submit(api._get_day_data, date): date for date in dates}
+        for future in concurrent.futures.as_completed(future_to_date):
+            day_data = future.result()
+            for channel in day_data:
+                if channel['channelId'] in channels:
+                    for measurement in channel.get('Measurements', []):
+                        timestamp = datetime.fromtimestamp(
+                            measurement['timestamp'], 
+                            tz=pytz.UTC
+                        ).astimezone(tz).replace(tzinfo=None)
+                        
+                        data.append({
+                            'timestamp': timestamp,
+                            'value': measurement['value'],
+                            'type': channels[channel['channelId']]
+                        })
+    
+    # Create DataFrame efficiently
     df = pd.DataFrame(data)
     
-    # If hourly interval is requested, resample the data
     if interval == '15min':
         # Filter data to start from the specified start_date at 00:00
         start_datetime = pd.Timestamp(start_date, tz='Europe/Amsterdam').replace(tzinfo=None)
         df = df[df['timestamp'] >= start_datetime]
         
-        # Pivot and sort the data
-        df = df.pivot(index='timestamp', columns='type', values='value').reset_index()
-        df = df.sort_values('timestamp')
+        # Optimize pivot operations
+        df = (df.groupby(['timestamp', 'type'])['value']
+              .mean()
+              .unstack(fill_value=0)
+              .reset_index())
         
-        # Melt back to long format
+        # Ensure all required columns exist
+        for col in ['supply', 'return']:
+            if col not in df.columns:
+                df[col] = 0
+                
+        # Melt back to long format efficiently
         df = df.melt(
             id_vars=['timestamp'],
             value_vars=['supply', 'return'],
@@ -139,25 +171,19 @@ def get_kenter_data(
             value_name='value'
         )
         
-        # remove very last 00:00
-        df = df.iloc[:-1]
-        return df
+        return df.iloc[:-1]  # remove very last 00:00
+        
     elif interval == '1h':
-        # Pivot the data first
-        df_pivot = df.pivot(index='timestamp', columns='type', values='value')
+        # Optimize hourly resampling
+        pivot_df = (df.pivot(index='timestamp', columns='type', values='value')
+                   .resample('1H')
+                   .sum()
+                   .reset_index())
         
-        # Resample to hourly data
-        df_hourly = df_pivot.resample('1H').sum()
-        
-        # Reset the format back to match 15-min data structure
-        df = pd.DataFrame({
-            'timestamp': df_hourly.index,
-            'supply': df_hourly['supply'],
-            'return': df_hourly['return']
-        }).melt(
+        return (pivot_df.melt(
             id_vars=['timestamp'],
             value_vars=['supply', 'return'],
             var_name='type',
             value_name='value'
-        )
-        return df.sort_values('timestamp').reset_index(drop=True)
+        ).sort_values('timestamp')
+         .reset_index(drop=True))

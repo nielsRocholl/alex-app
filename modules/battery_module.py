@@ -1,4 +1,3 @@
-
 import pandas as pd
 from typing import Dict, Tuple
 from modules.kenter_module import *
@@ -34,7 +33,11 @@ class BatterySavingsCalculator:
         energy_return = energy_usage.query("type == 'return'")
         energy_supply = energy_usage.query("type == 'supply'")
 
-        total_savings = pd.DataFrame(columns=['timestamp', 'savings'])
+        # Initialize total_savings with proper columns and dtypes
+        total_savings = pd.DataFrame({
+            'timestamp': pd.Series(dtype='datetime64[ns]'),
+            'savings': pd.Series(dtype='float64')
+        })
         
         # Process each date
         for date in energy_return['date'].unique():
@@ -69,10 +72,13 @@ class BatterySavingsCalculator:
                 daily_savings  += usable_energy * row['price']
                 remaining_surplus -= usable_energy
                 # Append daily savings to the DataFrame
-            total_savings = pd.concat(
-                [total_savings, pd.DataFrame({'timestamp': [date], 'savings': [daily_savings]})],
-                ignore_index=True
-            )
+                if daily_savings > 0:  # Only append if there are actual savings
+                    new_row = pd.DataFrame({
+                        'timestamp': [date],
+                        'savings': [daily_savings]
+                    })
+                    total_savings = pd.concat([total_savings, new_row], ignore_index=True)
+        
         return total_savings
 
 
