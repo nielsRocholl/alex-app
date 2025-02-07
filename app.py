@@ -35,6 +35,17 @@ def main():
             
             st.subheader("Analysis Settings")
             
+            # Battery capacity input
+            battery_capacity = st.number_input(
+                "Battery Capacity (kWh)",
+                min_value=1,
+                max_value=1000,
+                value=100,
+                step=1,
+                format="%d",
+                help="Enter the capacity of your battery storage system in kWh"
+            )
+            
             # Plot selection
             selected_plots = st.multiselect(
                 "Choose visualizations to display:",
@@ -110,7 +121,7 @@ def main():
                         
                         # Calculate metrics
                         daily_costs = calculate_daily_costs(usage_df, price_df)
-                        battery_calculator = BatterySavingsCalculator()
+                        battery_calculator = BatterySavingsCalculator(battery_capacity=battery_capacity)
                         savings = battery_calculator.arbitrage(usage_df, price_df)
                         
                         # Store results in session state
@@ -165,22 +176,22 @@ def main():
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric(
-                    "💰 Costs Without Battery", 
+                    "💰 Current Costs", 
                     f"€{total_costs:.2f}",
-                    help="Your total electricity bill if you DON'T have a battery"
+                    help="Your total electricity costs with current setup"
                 )
             with col2:
                 st.metric(
-                    "🔋 Savings With Battery", 
+                    "🔋 Potential Savings", 
                     f"€{total_savings:.2f}",
-                    help="Money you COULD save by storing solar energy in a battery",
-                    delta=f"{savings_percentage:.1f}% savings"
+                    help="Money you could save by using a battery",
+                    delta=f"{savings_percentage:.1f}% of costs"
                 )
             with col3:
                 st.metric(
-                    "☀️ Solar Energy Used", 
-                    f"{total_return:.1f} kWh",
-                    help="Clean energy produced by your solar panels"
+                    "💸 Costs After Battery", 
+                    f"€{(total_costs - total_savings):.2f}",
+                    help="Your estimated costs after implementing battery storage"
                 )
 
             # Energy statistics
