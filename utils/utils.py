@@ -179,7 +179,7 @@ def create_plot(usage_df, price_df):
 
 
 def create_cost_savings_plot(daily_costs, savings):
-    """Create an interactive cost comparison plot with clear savings visualization"""
+    """Create an intuitive, modern visualization of potential savings"""
     merged_data = pd.merge(
         daily_costs,
         savings,
@@ -187,63 +187,86 @@ def create_cost_savings_plot(daily_costs, savings):
         right_on='timestamp',
         how='outer'
     )
-    merged_data['cost_with_battery'] = merged_data['cost'] - merged_data['savings']
-
+    
+    # Calculate different cost scenarios
+    merged_data['cost_with_solar_only'] = merged_data['cost'] - merged_data['net_savings']
+    merged_data['cost_with_grid_arbitrage'] = merged_data['cost'] - merged_data['grid_arbitrage_savings']
+    merged_data['final_cost'] = merged_data['cost_with_solar_only'] - merged_data['grid_arbitrage_savings']
+    
     fig = go.Figure()
 
-    # Original Costs
+    # Original cost bars
     fig.add_trace(go.Bar(
         x=merged_data['date'],
         y=merged_data['cost'],
-        name='Cost Without Battery',
-        marker_color='#E74C3C',  # Red for original costs
-        hovertemplate="%{x|%b %d}<br>€%{y:.2f}<extra></extra>"
+        name='Current Cost',
+        marker=dict(
+            color='#E74C3C',
+            opacity=0.3
+        ),
+        hovertemplate="<b>Current Cost</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>"
     ))
 
-    # Costs with Battery (Overlay)
+    # Cost with only grid arbitrage
     fig.add_trace(go.Scatter(
         x=merged_data['date'],
-        y=merged_data['cost_with_battery'],
-        name='Cost With Battery',
-        line=dict(color='#2ECC71', width=3),  # Green for savings
-        mode='lines+markers',
-        hovertemplate="%{x|%b %d}<br>€%{y:.2f}<extra></extra>"
+        y=merged_data['cost_with_grid_arbitrage'],
+        name='With Grid Arbitrage',
+        line=dict(color='#3498DB', width=2.5),  # Blue for grid
+        mode='lines',
+        hovertemplate="<b>With Grid Arbitrage</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>"
+    ))
+
+    # Cost with only solar optimization
+    fig.add_trace(go.Scatter(
+        x=merged_data['date'],
+        y=merged_data['cost_with_solar_only'],
+        name='With Solar Storage',
+        line=dict(color='#F39C12', width=2.5),  # Orange for solar
+        mode='lines',
+        hovertemplate="<b>With Solar Storage</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>"
+    ))
+
+    # Final cost after all optimizations
+    fig.add_trace(go.Scatter(
+        x=merged_data['date'],
+        y=merged_data['final_cost'],
+        name='Final Cost',
+        line=dict(color='#27AE60', width=3),  # Green for final
+        mode='lines',
+        hovertemplate="<b>Final Cost</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>"
     ))
 
     fig.update_layout(
-        title=dict(
-            text="Daily Energy Costs: With vs. Without Battery",
-            x=0.05,
-            xanchor='left'
-        ),
+        showlegend=True,
         xaxis=dict(
-            title="Date",
+            title=None,
+            showgrid=False,
+            showline=True,
+            linecolor='rgba(0,0,0,0.2)'
         ),
         yaxis=dict(
-            title="Cost (€)",
+            title="Daily Cost (€)",
+            showgrid=False,
+            showline=True,
+            linecolor='rgba(0,0,0,0.2)',
+            titlefont=dict(size=14)
         ),
-        barmode='overlay',
+        plot_bgcolor='#f6f4f1',
+        paper_bgcolor='#f6f4f1',
         hovermode="x unified",
         legend=dict(
             orientation="h",
             yanchor="bottom",
             y=1.02,
             xanchor="left",
-            x=0
+            x=0,
+            bgcolor='rgba(255,255,255,0.8)',
+            bordercolor='rgba(0,0,0,0.1)',
+            borderwidth=1
         ),
-        template="plotly_white",
-        margin=dict(t=100),
-        plot_bgcolor='#f6f4f1'
-    )
-
-    # Add savings annotation
-    total_savings = merged_data['savings'].sum()
-    fig.add_annotation(
-        text=f"Total Potential Savings: €{total_savings:.2f}",
-        xref="paper", yref="paper",
-        x=0.05, y=0.95,
-        showarrow=False,
-        font=dict(color='#2ECC71', size=12)
+        margin=dict(t=40, l=60, r=60, b=40),
+        barmode='overlay'
     )
 
     return fig
