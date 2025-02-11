@@ -22,6 +22,26 @@ authenticator = Authenticator(
     redirect_uri= "https://nielsrocholl.streamlit.app/" #"http://localhost:8501"
 )
 
+def recalculate_savings(battery_capacity, enable_grid_arbitrage, enable_solar_arbitrage):
+    """Recalculate savings without fetching new data"""
+    if 'report_data' not in st.session_state:
+        return
+    
+    # Get cached data
+    usage_df = st.session_state.report_data['usage_df']
+    price_df = st.session_state.report_data['price_df']
+    
+    # Recalculate savings
+    battery_calculator = BatterySavingsCalculator(
+        battery_capacity=battery_capacity,
+        enable_grid_arbitrage=enable_grid_arbitrage,
+        enable_solar_arbitrage=enable_solar_arbitrage
+    )
+    savings = battery_calculator.arbitrage(usage_df, price_df)
+    
+    # Update session state
+    st.session_state.report_data['savings'] = savings
+
 def main():
     st.title("⚡ Energy Analyzer")
     authenticator.check_auth()
@@ -45,6 +65,31 @@ def main():
                 format="%d",
                 help="Enter the capacity of your battery storage system in kWh"
             )
+            
+            enable_solar_arbitrage = st.toggle(
+                "Enable Solar Storage",
+                value=True,
+                help="Store excess solar energy to use during expensive periods"
+            )
+            enable_grid_arbitrage = st.toggle(
+                "Enable Grid Arbitrage",
+                value=False,
+                help="Buy cheap grid energy to use during expensive periods"
+            )
+            
+            # If any settings change and we have data, recalculate
+            if 'report_data' in st.session_state:
+                current_settings = (
+                    battery_capacity,
+                    enable_grid_arbitrage,
+                    enable_solar_arbitrage
+                )
+                if 'last_settings' not in st.session_state:
+                    st.session_state.last_settings = current_settings
+                
+                if current_settings != st.session_state.last_settings:
+                    recalculate_savings(battery_capacity, enable_grid_arbitrage, enable_solar_arbitrage)
+                    st.session_state.last_settings = current_settings
             
             # Plot selection
             selected_plots = st.multiselect(
@@ -121,7 +166,11 @@ def main():
                         
                         # Calculate metrics
                         daily_costs = calculate_daily_costs(usage_df, price_df)
-                        battery_calculator = BatterySavingsCalculator(battery_capacity=battery_capacity)
+                        battery_calculator = BatterySavingsCalculator(
+                            battery_capacity=battery_capacity,
+                            enable_grid_arbitrage=enable_grid_arbitrage,
+                            enable_solar_arbitrage=enable_solar_arbitrage
+                        )
                         savings = battery_calculator.arbitrage(usage_df, price_df)
                         
                         # Store results in session state
@@ -166,13 +215,17 @@ def main():
             # Key metrics cards
             st.markdown("### 📊 Your Battery Savings Potential")
             total_costs = daily_costs['cost'].sum()
-            total_savings = savings['savings'].sum()
-            savings_percentage = (total_savings / total_costs * 100) if total_costs > 0 else 0
+            total_gross_savings = savings['gross_savings'].sum()
+            total_lost_revenue = savings['lost_revenue'].sum()
+            total_net_savings = savings['net_savings'].sum()
+            total_grid_arbitrage = savings['grid_arbitrage_savings'].sum()
+            total_combined_savings = total_net_savings + total_grid_arbitrage
+            savings_percentage = (total_combined_savings / total_costs * 100) if total_costs > 0 else 0
             total_supply = usage_df[usage_df['type'] == 'supply']['value'].sum()
             total_return = usage_df[usage_df['type'] == 'return']['value'].sum()
             avg_price = price_df['price'].mean()
 
-            # Display metrics
+            # Display metrics in two rows
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric(
@@ -182,16 +235,37 @@ def main():
                 )
             with col2:
                 st.metric(
-                    "🔋 Potential Savings", 
-                    f"€{total_savings:.2f}",
-                    help="Money you could save by using a battery",
-                    delta=f"{savings_percentage:.1f}% of costs"
+                    "🌞 Solar Storage Savings", 
+                    f"€{total_net_savings:.2f}",
+                    help="Net savings from storing and using your solar energy"
                 )
             with col3:
                 st.metric(
-                    "💸 Costs After Battery", 
-                    f"€{(total_costs - total_savings):.2f}",
-                    help="Your estimated costs after implementing battery storage"
+                    "⚡ Grid Arbitrage Savings", 
+                    f"€{total_grid_arbitrage:.2f}",
+                    help="Additional savings from buying cheap grid energy"
+                )
+
+            # Second row of metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    "💹 Total Combined Savings", 
+                    f"€{total_combined_savings:.2f}",
+                    delta=f"{savings_percentage:.1f}% of costs",
+                    help="Total savings from both solar storage and grid arbitrage"
+                )
+            with col2:
+                st.metric(
+                    "📉 Lost Solar Revenue", 
+                    f"-€{total_lost_revenue:.2f}",
+                    help="Revenue lost from not selling solar energy back to grid"
+                )
+            with col3:
+                st.metric(
+                    "💸 Final Costs", 
+                    f"€{(total_costs - total_combined_savings):.2f}",
+                    help="Your estimated costs after all optimizations"
                 )
 
             # Energy statistics
