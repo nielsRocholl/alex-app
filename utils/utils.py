@@ -327,27 +327,42 @@ def create_cost_savings_plot_v2(daily_costs, savings):
             x=merged_data['date'],
             y=merged_data['cost'],
             name='Current Cost',
-            marker_color='rgba(231, 76, 60, 0.3)',
+            marker_color='rgba(217, 120, 87, 0.8)',  # App orange (d97857) for costs
             hovertemplate="<b>Current Cost</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>",
         ),
         row=1, col=1
     )
     
+    # Calculate daily savings
+    merged_data['daily_savings'] = merged_data['cost'] - merged_data['final_cost']
+    
+    # Add savings overlay
+    fig.add_trace(
+        go.Bar(
+            x=merged_data['date'],
+            y=merged_data['daily_savings'],
+            name='Savings with Battery',
+            marker_color='rgba(27, 108, 187, 0.8)',  # Claude blue (#1b6cbb) for savings
+            hovertemplate="<b>Daily Savings</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>",
+            base=merged_data['final_cost'],  # Start from final cost
+        ),
+        row=1, col=1
+    )
+
+    # Add a line for the final cost
     fig.add_trace(
         go.Scatter(
             x=merged_data['date'],
             y=merged_data['final_cost'],
-            name='Reduced Cost (Battery Scenario)', 
-            line=dict(color='#2ECC71', width=3),
-            fill='tonexty',
-            fillcolor='rgba(46, 204, 113, 0.1)',
-            hovertemplate="<b>Optimized Cost</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>",
+            name='Final Cost with Battery',
+            line=dict(color='rgba(86, 69, 161, 0.8)', width=2, dash='dot'),  # Claude purple (#5645a1) for final
+            hovertemplate="<b>Final Cost</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>",
         ),
         row=1, col=1
     )
 
     # Bottom plot: Daily savings breakdown
-    colors = ['#2ECC71', '#3498DB', '#E74C3C']
+    colors = ['rgba(27, 108, 187, 0.8)', 'rgba(86, 69, 161, 0.8)', 'rgba(217, 120, 87, 0.8)']  # Blue, Purple, Orange
     savings_data = [
         ('Solar Storage Savings', merged_data['solar_savings'].sum()),
         ('Grid Arbitrage Savings', merged_data['grid_savings'].sum()),
@@ -361,7 +376,7 @@ def create_cost_savings_plot_v2(daily_costs, savings):
             orientation="v",
             measure=["relative", "relative", "relative", "total"],
             x=["Solar Storage<br>Savings", "Grid Arbitrage<br>Savings", "Lost Solar<br>Revenue", "Total<br>Savings"],
-            textposition=["inside", "inside", "inside", "inside"],  # Place all text inside bars
+            textposition=["inside", "inside", "inside", "inside"],
             text=[f"€{val:.2f}" for val in [
                 savings_data[0][1],
                 savings_data[1][1],
@@ -374,11 +389,15 @@ def create_cost_savings_plot_v2(daily_costs, savings):
                 savings_data[2][1],
                 0
             ],
-            connector={"line": {"color": "rgb(63, 63, 63)"}},
-            decreasing={"marker": {"color": "#E74C3C"}},
-            increasing={"marker": {"color": "#2ECC71"}},
-            totals={"marker": {"color": "#3498DB"}},
-            textfont=dict(size=12, color='rgba(255,255,255,0.9)'),  # Make text white and slightly transparent for better contrast
+            connector={"line": {"color": "rgba(86, 69, 161, 0.8)"}},  # Claude purple for connectors
+            decreasing={"marker": {"color": "rgba(217, 120, 87, 0.8)"}},  # App orange for negative
+            increasing={"marker": {"color": "rgba(27, 108, 187, 0.8)"}},  # Claude blue for positive
+            totals={"marker": {"color": "rgba(75, 181, 67, 0.8)"}},      # Green for total savings
+            textfont=dict(
+                size=12,
+                color='white',  # White text for better contrast
+                family="Arial"
+            ),
             hovertemplate="<b>%{x}</b><br>€%{y:.2f}<extra></extra>"
         ),
         row=2, col=1
@@ -393,10 +412,10 @@ def create_cost_savings_plot_v2(daily_costs, savings):
             font=dict(size=20)
         ),
         showlegend=True,
-        plot_bgcolor='#f6f4f1',  # Restore original background color
-        paper_bgcolor='#f6f4f1',  # Restore original background color
-        height=900,  # Increase overall height
-        margin=dict(t=100, l=80, r=80, b=80),  # Increase margins
+        plot_bgcolor='#f6f4f1',
+        paper_bgcolor='#f6f4f1',
+        height=900,
+        margin=dict(t=100, l=80, r=80, b=80),
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -406,19 +425,21 @@ def create_cost_savings_plot_v2(daily_costs, savings):
             bgcolor='rgba(255,255,255,0.8)',
             bordercolor='rgba(0,0,0,0.1)',
             borderwidth=1
-        )
+        ),
+        barmode='overlay',  # Ensure bars overlay each other
+        bargap=0.15        # Gap between bars
     )
 
-    # Update axes
+    # Update axes and subplot-specific settings
     fig.update_xaxes(
-        showgrid=False,  # Match original style
+        showgrid=False,
         showline=True,
         linecolor='rgba(0,0,0,0.2)',
         row=1, col=1
     )
     fig.update_yaxes(
         title="Daily Cost (€)",
-        showgrid=False,  # Match original style
+        showgrid=False,
         showline=True,
         linecolor='rgba(0,0,0,0.2)',
         titlefont=dict(size=14),
@@ -426,11 +447,18 @@ def create_cost_savings_plot_v2(daily_costs, savings):
     )
     fig.update_yaxes(
         title="Savings (€)",
-        showgrid=False,  # Match original style
+        showgrid=False,
         showline=True,
         linecolor='rgba(0,0,0,0.2)',
         titlefont=dict(size=14),
         row=2, col=1
     )
+
+    # Update the first subplot to use grouped bars
+    fig.update_layout({
+        'barmode': 'group',
+        'bargap': 0.15,
+        'bargroupgap': 0.1
+    })
 
     return fig

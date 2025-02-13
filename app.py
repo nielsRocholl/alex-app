@@ -19,7 +19,7 @@ authenticator = Authenticator(
     allowed_users=allowed_users,
     token_key=st.secrets["TOKEN_KEY"],
     client_secret=st.secrets["CLIENT_SECRET"],
-    redirect_uri= "https://nielsrocholl.streamlit.app/" #"http://localhost:8501" #
+    redirect_uri= "https://nielsrocholl.streamlit.app/" # "http://localhost:8501" 
 )
 
 def recalculate_savings(battery_capacity, enable_grid_arbitrage, enable_solar_arbitrage):
