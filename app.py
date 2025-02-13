@@ -19,7 +19,7 @@ authenticator = Authenticator(
     allowed_users=allowed_users,
     token_key=st.secrets["TOKEN_KEY"],
     client_secret=st.secrets["CLIENT_SECRET"],
-    redirect_uri= "https://nielsrocholl.streamlit.app/" #"http://localhost:8501"
+    redirect_uri= "https://nielsrocholl.streamlit.app/" # "http://localhost:8501" 
 )
 
 def recalculate_savings(battery_capacity, enable_grid_arbitrage, enable_solar_arbitrage):
@@ -208,7 +208,8 @@ def main():
             
             if "Cost Savings" in selected_plots:
                 st.markdown("## 💰 Battery Savings Potential")
-                cost_savings_fig = create_cost_savings_plot(daily_costs, savings)
+                # cost_savings_fig = create_cost_savings_plot(daily_costs, savings)
+                cost_savings_fig = create_cost_savings_plot_v2(daily_costs, savings)
                 st.plotly_chart(cost_savings_fig, use_container_width=True)
                 st.markdown("---")
             
@@ -219,7 +220,7 @@ def main():
             total_lost_revenue = savings['lost_revenue'].sum()
             total_net_savings = savings['net_savings'].sum()
             total_grid_arbitrage = savings['grid_arbitrage_savings'].sum()
-            total_combined_savings = total_net_savings + total_grid_arbitrage
+            total_combined_savings = total_net_savings + total_grid_arbitrage - total_lost_revenue
             savings_percentage = (total_combined_savings / total_costs * 100) if total_costs > 0 else 0
             total_supply = usage_df[usage_df['type'] == 'supply']['value'].sum()
             total_return = usage_df[usage_df['type'] == 'return']['value'].sum()
