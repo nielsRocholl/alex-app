@@ -23,7 +23,7 @@ authenticator = Authenticator(
     allowed_users=allowed_users,
     token_key=st.secrets["TOKEN_KEY"],
     client_secret=st.secrets["CLIENT_SECRET"],
-    redirect_uri= "https://mango2mango.streamlit.app/" #"http://localhost:8501" #
+    redirect_uri= "http://localhost:8501" #"https://mango2mango.streamlit.app/" #"http://localhost:8501" #
 )
 
 def recalculate_savings(battery_capacity, enable_grid_arbitrage, enable_solar_arbitrage):
@@ -141,10 +141,15 @@ def main():
 
         # Date inputs
         col1, col2 = st.columns(2)
+        
+        # Calculate default dates: yesterday and 15 days before yesterday
+        yesterday = datetime.now().date() - pd.Timedelta(days=1)
+        default_start_date = yesterday - pd.Timedelta(days=14)
+        
         with col1:
-            start_date = st.date_input("Start Date", help="Select analysis start date")
+            start_date = st.date_input("Start Date", value=default_start_date, help="Select analysis start date")
         with col2:
-            end_date = st.date_input("End Date", help="Select analysis end date")
+            end_date = st.date_input("End Date", value=yesterday, help="Select analysis end date")
 
         # Initialize the show_report state if it doesn't exist
         if 'show_report' not in st.session_state:
