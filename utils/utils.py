@@ -49,11 +49,12 @@ def calculate_daily_costs(usage_df, price_df):
     return daily_costs
 
 def get_meter_hierarchy():
-    """Retrieve and cache meter structure with formatted connection name -> (connection_id, main_metering_point) mapping"""
+    """Retrieve and cache meter structure with formatted connection name -> (connection_id, main_metering_point, gtv) mapping"""
     if 'meter_hierarchy' not in st.session_state:
         try:
             api = KenterAPI()
             meter_data = api.get_meter_list()
+            gtv_info = api.get_gtv_info()
             hierarchy = {}
             
             for connection in meter_data:
@@ -68,7 +69,7 @@ def get_meter_hierarchy():
                         main_mp = mp.get('meteringPointId')
                         break  # Found main point
 
-                # Get connection name details from first metering point's masterData
+                # Get connection name details and GTV info
                 connection_name = conn_id  # default if no name found
                 if connection.get('meteringPoints'):
                     master_data = connection['meteringPoints'][0].get('masterData', [{}])[0]
@@ -77,9 +78,15 @@ def get_meter_hierarchy():
                     if bp_code and bp_name:
                         connection_name = f"{bp_code} - {bp_name}"
 
+                # Get GTV info for this connection
+                gtv_data = gtv_info.get(conn_id, {})
+                
                 hierarchy[connection_name] = {
                     'connection_id': conn_id,
-                    'main_meter': main_mp
+                    'main_meter': main_mp,
+                    'gtv': gtv_data.get('gtv'),
+                    'address': gtv_data.get('address'),
+                    'city': gtv_data.get('city')
                 }
 
             st.session_state.meter_hierarchy = hierarchy

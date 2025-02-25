@@ -19,7 +19,7 @@ authenticator = Authenticator(
     allowed_users=allowed_users,
     token_key=st.secrets["TOKEN_KEY"],
     client_secret=st.secrets["CLIENT_SECRET"],
-    redirect_uri= "https://nielsrocholl.streamlit.app/" # "http://localhost:8501" 
+    redirect_uri= "http://localhost:8501" #"https://nielsrocholl.streamlit.app/" 
 )
 
 def recalculate_savings(battery_capacity, enable_grid_arbitrage, enable_solar_arbitrage):
@@ -271,7 +271,7 @@ def main():
 
             # Energy statistics
             st.markdown("### ⚡ Energy Snapshot")
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric(
                     "🔌 Grid Energy Used", 
@@ -285,11 +285,24 @@ def main():
                     help="Typical price you paid for grid energy"
                 )
             with col3:
+                # Get GTV for the selected connection
+                conn_details = meter_hierarchy[selected_conn_name]
+                gtv = conn_details.get('gtv', 'N/A')
+                st.metric(
+                    "⚡ Contracted Capacity (GTV)", 
+                    f"{gtv} kW" if gtv != 'N/A' else 'N/A',
+                    help="Gecontracteerd Transportvermogen - Your contracted grid capacity"
+                )
+            with col4:
                 st.metric(
                     "📆 Period Covered", 
                     f"{start_date.strftime('%d %b')} - {end_date.strftime('%d %b')}",
                     help="Analysis time range"
                 )
+
+            # Add location info if available
+            if conn_details.get('address') and conn_details.get('city'):
+                st.caption(f"📍 Location: {conn_details['address']}, {conn_details['city']}")
             
             # Add refresh button with timestamp
             refresh_col, ts_col = st.columns([1,3])
