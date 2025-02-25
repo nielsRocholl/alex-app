@@ -2,6 +2,7 @@ import streamlit as st
 from modules.kenter_module import get_kenter_data
 from modules.entsoe_module import get_energy_prices
 from modules.battery_module import BatterySavingsCalculator
+from modules.tax_module import NetworkTaxCalculator
 from utils.utils import *
 from auth.authenticator import Authenticator
 from datetime import datetime
@@ -55,6 +56,14 @@ def main():
             
             st.subheader("Analysis Settings")
             
+            # Network Operator Selection
+            network_operator = st.selectbox(
+                "Network Operator",
+                options=NetworkTaxCalculator.NETWORK_OPERATORS,
+                index=0,
+                help="Select your network operator for tax calculations"
+            )
+            
             # Battery capacity input
             battery_capacity = st.number_input(
                 "Battery Capacity (kWh)",
@@ -73,7 +82,7 @@ def main():
             )
             enable_grid_arbitrage = st.toggle(
                 "Enable Grid Arbitrage",
-                value=False,
+                value=True,
                 help="Buy cheap grid energy to use during expensive periods"
             )
             
@@ -162,10 +171,26 @@ def main():
                         price_df = get_energy_prices(
                             start_date.strftime('%Y-%m-%d'),
                             end_date.strftime('%Y-%m-%d')
-                        )    
+                        )
                         
-                        # Calculate metrics
-                        daily_costs = calculate_daily_costs(usage_df, price_df)
+                        # Get GTV for tax calculation
+                        gtv_str = conn_details.get('gtv', 'N/A')
+                        try:
+                            gtv = float(gtv_str)
+                        except (ValueError, TypeError):
+                            st.warning("⚠️ Could not determine GTV for tax calculations. Using default high rate.")
+                            gtv = 0  # This will result in using the low_gtv (higher) tax rate
+                        
+                        # Calculate network tax
+                        tax_calculator = NetworkTaxCalculator()
+                        tax_df = tax_calculator.calculate_tax(
+                            usage_df,
+                            network_operator,
+                            gtv
+                        )
+                        
+                        # Calculate metrics including tax
+                        daily_costs = calculate_daily_costs(usage_df, price_df, tax_df)
                         battery_calculator = BatterySavingsCalculator(
                             battery_capacity=battery_capacity,
                             enable_grid_arbitrage=enable_grid_arbitrage,
@@ -177,6 +202,7 @@ def main():
                         st.session_state.report_data = {
                             'usage_df': usage_df,
                             'price_df': price_df,
+                            'tax_df': tax_df,
                             'daily_costs': daily_costs,
                             'savings': savings,
                             'generated_at': datetime.now()
@@ -196,6 +222,7 @@ def main():
             report_data = st.session_state.report_data
             usage_df = report_data['usage_df']
             price_df = report_data['price_df']
+            tax_df = report_data['tax_df']
             daily_costs = report_data['daily_costs']
             savings = report_data['savings']
             
@@ -213,9 +240,11 @@ def main():
                 st.plotly_chart(cost_savings_fig, use_container_width=True)
                 st.markdown("---")
             
-            # Key metrics cards
+            # Key metrics cards with tax information
             st.markdown("### 📊 Your Battery Savings Potential")
             total_costs = daily_costs['cost'].sum()
+            total_tax = daily_costs['tax'].sum()
+            total_energy_cost = total_costs - total_tax
             total_gross_savings = savings['gross_savings'].sum()
             total_lost_revenue = savings['lost_revenue'].sum()
             total_net_savings = savings['net_savings'].sum()
@@ -226,7 +255,28 @@ def main():
             total_return = usage_df[usage_df['type'] == 'return']['value'].sum()
             avg_price = price_df['price'].mean()
 
-            # Display metrics in two rows
+            # First row of metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    "💰 Current Energy Costs", 
+                    f"€{total_energy_cost:.2f}",
+                    help="Your electricity costs without network tax"
+                )
+            with col2:
+                st.metric(
+                    "🏢 Network Tax", 
+                    f"€{total_tax:.2f}",
+                    help=f"Network operator tax based on {network_operator} rates"
+                )
+            with col3:
+                st.metric(
+                    "💶 Total Costs", 
+                    f"€{total_costs:.2f}",
+                    help="Total costs including network tax"
+                )
+
+            # Second row of metrics
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric(
@@ -247,7 +297,7 @@ def main():
                     help="Additional savings from buying cheap grid energy"
                 )
 
-            # Second row of metrics
+            # Third row of metrics
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric(

@@ -23,8 +23,8 @@ def validate_dates(start_date, end_date):
     return True, ""
 
 
-def calculate_daily_costs(usage_df, price_df):
-    """Calculate the daily energy costs."""
+def calculate_daily_costs(usage_df, price_df, tax_df=None):
+    """Calculate the daily energy costs including network tax if provided."""
     # Ensure we're working with copies
     usage_df = usage_df.copy()
     price_df = price_df.copy()
@@ -39,12 +39,28 @@ def calculate_daily_costs(usage_df, price_df):
     # Merge with prices
     costs = pd.merge(supply_df, price_df[['timestamp', 'price']], on='timestamp', how='left')
     
-    # Calculate cost per interval
-    costs['cost'] = costs['value'] * costs['price']
+    # Calculate energy cost per interval
+    costs['energy_cost'] = costs['value'] * costs['price']
+    
+    # Add tax if provided
+    if tax_df is not None:
+        tax_df = tax_df.copy()
+        tax_df['timestamp'] = pd.to_datetime(tax_df['timestamp'])
+        costs = pd.merge(costs, tax_df[['timestamp', 'tax_amount']], on='timestamp', how='left')
+        costs['tax'] = costs['tax_amount']
+    else:
+        costs['tax'] = 0
+    
+    # Calculate total cost
+    costs['cost'] = costs['energy_cost'] + costs['tax']
     
     # Group by date
     costs['date'] = costs['timestamp'].dt.date
-    daily_costs = costs.groupby('date')['cost'].sum().reset_index()
+    daily_costs = costs.groupby('date').agg({
+        'cost': 'sum',
+        'energy_cost': 'sum',
+        'tax': 'sum'
+    }).reset_index()
     
     return daily_costs
 
