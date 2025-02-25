@@ -2,9 +2,10 @@ import pandas as pd
 from entsoe import EntsoePandasClient
 from datetime import datetime
 import streamlit as st
-import time
 from functools import lru_cache
 import concurrent.futures
+from typing import Dict, List, Tuple
+import numpy as np
 
 class EntsoeAPI:
     """Simple ENTSO-E API client for retrieving energy prices."""
@@ -12,21 +13,21 @@ class EntsoeAPI:
     def __init__(self):
         self._api_key = st.secrets["ENTSOE_CLIENT_SECRET"] 
         self._client = EntsoePandasClient(api_key=self._api_key)
-        self._cache = {}
+        self._cache: Dict[str, pd.Series] = {}
 
-    @lru_cache(maxsize=128)
+    @lru_cache(maxsize=256)  # Increased cache size
     def _get_prices(self, start: datetime, end: datetime, country_code: str) -> pd.Series:
         """Get day-ahead prices from ENTSO-E with caching."""
         cache_key = f"{start}_{end}_{country_code}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
         
         try:
+            if cache_key in self._cache:
+                return self._cache[cache_key]
+            
             prices = self._client.query_day_ahead_prices(country_code, start=start, end=end)
             self._cache[cache_key] = prices
             return prices
         except Exception as e:
-            # Log the error details
             print(f"Error fetching prices for period {start} to {end}: {str(e)}")
             return pd.Series()
 
@@ -64,22 +65,23 @@ def get_energy_prices(start_date: str, end_date: str, country_code: str = 'NL', 
     
     # Get price data in parallel monthly chunks
     api = EntsoeAPI()
-    chunks = []
-    chunk_params = []
+    chunk_params: List[Tuple[pd.Timestamp, pd.Timestamp, str]] = []
     
+    # Pre-calculate all chunk parameters
     current_start = start
     while current_start < end:
-        # Calculate chunk end date (end of month or final end date)
         chunk_end = min(
             current_start + pd.offsets.MonthEnd(0),
             end
         )
-        
         chunk_params.append((current_start, chunk_end, country_code))
         current_start = chunk_end + pd.Timedelta(days=1)
     
-    # Fetch chunks in parallel
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    # Fetch chunks in parallel with optimized thread count
+    n_workers = min(len(chunk_params), 8)  # Cap number of workers
+    chunks = []
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
         futures = [
             executor.submit(api._get_prices, start, end, cc)
             for start, end, cc in chunk_params
@@ -89,23 +91,23 @@ def get_energy_prices(start_date: str, end_date: str, country_code: str = 'NL', 
     if not chunks:
         raise ValueError(f"No price data available for the period {start.date()} to {end.date()}")
     
-    # Combine chunks and handle duplicates
-    all_prices = pd.concat(chunks)
+    # Combine chunks efficiently
+    all_prices = pd.concat(chunks, copy=False)
     all_prices = all_prices[~all_prices.index.duplicated(keep='first')]
     all_prices = all_prices.sort_index()
     
     if interval == '1h':
-        # Convert to DataFrame with hourly data
+        # Convert to DataFrame efficiently for hourly data
         return pd.DataFrame({
             'timestamp': all_prices.index.tz_localize(None),
             'price': all_prices.values / 1000
-        })
+        }, copy=False)
     
-    # Create 15-minute interval timestamps
+    # Optimize 15-minute interval creation
     start_time = all_prices.index[0].tz_localize(None)
     end_time = all_prices.index[-1].tz_localize(None)
     
-    # Create timestamps for 15-minute intervals
+    # Create timestamps array efficiently
     timestamps = pd.date_range(
         start=start_time,
         end=end_time,
@@ -113,13 +115,34 @@ def get_energy_prices(start_date: str, end_date: str, country_code: str = 'NL', 
         inclusive='right'
     )
     
-    # Optimize 15-minute interval creation using vectorized operations
-    result = pd.DataFrame({'timestamp': timestamps})
-    result['hour'] = result['timestamp'].dt.floor('h')
-    hourly_prices = pd.Series(all_prices.values / 1000, index=all_prices.index.tz_localize(None))
-    result['price'] = result['hour'].map(dict(zip(hourly_prices.index, hourly_prices.values)))
+    # Create result DataFrame efficiently
+    n_intervals = len(timestamps)
+    result = pd.DataFrame({
+        'timestamp': timestamps,
+        'hour': timestamps.floor('h'),
+    }, copy=False)
     
-    return result.drop('hour', axis=1).reset_index(drop=True)
+    # Create price mapping efficiently using numpy
+    hourly_prices = pd.Series(
+        all_prices.values / 1000,
+        index=all_prices.index.tz_localize(None)
+    )
+    
+    # Vectorized price mapping using numpy
+    hour_keys = hourly_prices.index.values
+    hour_values = hourly_prices.values
+    result_hours = result['hour'].values
+    
+    # Create a mapping array using searchsorted
+    idx = np.searchsorted(hour_keys, result_hours)
+    # Ensure we don't go out of bounds
+    idx = np.clip(idx, 0, len(hour_values) - 1)
+    # Only use exact matches
+    mask = (idx < len(hour_keys)) & (result_hours == hour_keys[idx])
+    result['price'] = np.nan
+    result.loc[mask, 'price'] = hour_values[idx[mask]]
+    
+    return result[['timestamp', 'price']].copy()
 
 
 if __name__ == "__main__":

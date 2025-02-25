@@ -79,6 +79,52 @@ class KenterAPI:
         
         return response.json()
 
+    def get_gtv_info(self) -> Dict[str, Dict]:
+        """
+        Extract GTV (Gecontracteerd Transportvermogen) information for all connections.
+        
+        Returns:
+            Dict with connection IDs as keys and dict containing GTV and location info as values
+        """
+        meter_data = self.get_meter_list()
+        gtv_info = {}
+        
+        for connection in meter_data:
+            conn_id = connection.get('connectionId')
+            if not conn_id:
+                continue
+                
+            # Get all metering points' master data to find GTV
+            gtv_found = False
+            if connection.get('meteringPoints'):
+                for mp in connection['meteringPoints']:
+                    master_data_list = mp.get('masterData', [])
+                    for master_data in master_data_list:
+                        if master_data.get('contractedCapacity'):
+                            gtv_found = True
+                            gtv_info[conn_id] = {
+                                'gtv': master_data.get('contractedCapacity'),
+                                'address': master_data.get('address'),
+                                'city': master_data.get('city'),
+                                'bp_code': master_data.get('bpCode'),
+                                'bp_name': master_data.get('bpName')
+                            }
+                            break
+                    if gtv_found:
+                        break
+                
+                # If no GTV found in any metering point, use first metering point's data
+                if not gtv_found:
+                    master_data = connection['meteringPoints'][0].get('masterData', [{}])[0]
+                    gtv_info[conn_id] = {
+                        'gtv': 'N/A',
+                        'address': master_data.get('address'),
+                        'city': master_data.get('city'),
+                        'bp_code': master_data.get('bpCode'),
+                        'bp_name': master_data.get('bpName')
+                    }
+        
+        return gtv_info
 
 def get_kenter_data(
     start_date: str, 
