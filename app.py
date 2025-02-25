@@ -6,6 +6,9 @@ from modules.tax_module import NetworkTaxCalculator
 from utils.utils import *
 from auth.authenticator import Authenticator
 from datetime import datetime
+import plotly.graph_objects as go
+from streamlit_echarts import st_echarts
+import pandas as pd
 
 # Set page configuration
 st.set_page_config(
@@ -235,10 +238,98 @@ def main():
             
             if "Cost Savings" in selected_plots:
                 st.markdown("## 💰 Battery Savings Potential")
-                # cost_savings_fig = create_cost_savings_plot(daily_costs, savings)
-                cost_savings_fig = create_cost_savings_plot_v2(daily_costs, savings)
-                st.plotly_chart(cost_savings_fig, use_container_width=True)
+                
+                # Display contextual information above the chart
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown("""
+                    This chart shows your **daily energy costs** with and without a battery system.
+                    - The <span style='color: #FF6B6B; font-weight: bold;'>coral bars</span> show your current costs
+                    - The <span style='color: #4361EE; font-weight: bold;'>blue line</span> shows your costs after battery savings
+                    - The <span style='color: #2EC4B6; font-weight: bold;'>teal trend line</span> shows the savings pattern over time
+                    """, unsafe_allow_html=True)
+                with col2:
+                    total_savings = (savings['net_savings'].sum() + savings['grid_arbitrage_savings'].sum() - savings['lost_revenue'].sum())
+                    avg_daily_savings = total_savings / len(daily_costs) if len(daily_costs) > 0 else 0
+                    st.metric("Average Daily Savings", f"€{avg_daily_savings:.2f}")
+                
+                # Create the ECharts options
+                echarts_options = create_echarts_cost_savings_plot(daily_costs, savings)
+                
+                # Add a wrapper for the chart with better padding
+                st.markdown('<div style="padding: 1rem 0;">', unsafe_allow_html=True)
+                
+                # Display the chart with additional height for better visualization
+                with st.container():
+                    try:
+                        st_echarts(options=echarts_options, height="500px", key="cost_savings_chart")
+                    except Exception as e:
+                        st.error(f"Error displaying ECharts: {str(e)}")
+                        
+                        # Fallback to plotly
+                        st.info("Displaying fallback visualization...")
+                        merged_data = pd.merge(
+                            daily_costs,
+                            savings,
+                            left_on='date',
+                            right_on='timestamp',
+                            how='outer'
+                        )
+                        
+                        # Calculate final cost
+                        merged_data['final_cost'] = merged_data['cost'] - merged_data['net_savings'] - merged_data['grid_arbitrage_savings']
+                        
+                        # Create a simple plotly bar chart
+                        fig = go.Figure()
+                        
+                        # Add original cost bars
+                        fig.add_trace(go.Bar(
+                            x=merged_data['date'],
+                            y=merged_data['cost'],
+                            name='Current Cost',
+                            marker_color='#FF6B6B'
+                        ))
+                        
+                        # Add final cost line
+                        fig.add_trace(go.Scatter(
+                            x=merged_data['date'],
+                            y=merged_data['final_cost'],
+                            name='Final Cost',
+                            line=dict(color='#4361EE', width=3)
+                        ))
+                        
+                        fig.update_layout(
+                            title="Daily Cost Comparison",
+                            xaxis_title="Date",
+                            yaxis_title="Cost (€)",
+                            legend_title="Legend",
+                            height=500,
+                            template="plotly_white"
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                st.markdown('</div>', unsafe_allow_html=True)
                 st.markdown("---")
+                
+                # Add the savings breakdown chart
+                st.markdown("## 📊 Savings Breakdown")
+                st.markdown("""
+                This chart shows how your savings are calculated:
+                - **Solar Savings**: Money saved by using stored solar energy
+                - **Grid Arbitrage**: Money saved by buying cheap electricity and using it during expensive periods
+                - **Lost Revenue**: Money you could have earned by selling excess solar energy back to the grid
+                - **Net Savings**: Your total savings after all factors are considered
+                """)
+                
+                # Create the savings breakdown chart
+                breakdown_options = create_savings_breakdown_chart(savings)
+                
+                # Display the chart
+                try:
+                    st_echarts(options=breakdown_options, height="400px", key="savings_breakdown_chart")
+                except Exception as e:
+                    st.error(f"Error displaying savings breakdown chart: {str(e)}")
             
             # Key metrics cards with tax information
             st.markdown("### 📊 Your Battery Savings Potential")
@@ -254,102 +345,216 @@ def main():
             total_supply = usage_df[usage_df['type'] == 'supply']['value'].sum()
             total_return = usage_df[usage_df['type'] == 'return']['value'].sum()
             avg_price = price_df['price'].mean()
+            final_cost = total_costs - total_combined_savings
 
-            # First row of metrics
+            # Modern UI with clear sections
+            st.markdown("""
+            <style>
+            .big-font {
+                font-size:30px !important;
+                font-weight:bold;
+            }
+            .card {
+                border-radius: 10px;
+                padding: 20px;
+                background-color: white;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+                margin-bottom: 20px;
+            }
+            .summary-card {
+                text-align: center;
+                padding: 15px;
+                border-radius: 10px;
+                margin-bottom: 10px;
+            }
+            .highlight {
+                color: #1b6cbb;
+                font-weight: bold;
+            }
+            .savings {
+                color: #4bb543;
+            }
+            .costs {
+                color: #d97857;
+            }
+            .neutral {
+                color: #5645a1;
+            }
+            .tooltip-icon {
+                color: #aaaaaa;
+                font-size: 16px;
+                margin-left: 5px;
+            }
+            .progress-container {
+                width: 100%;
+                background-color: #f1f1f1;
+                border-radius: 5px;
+                margin-top: 10px;
+                margin-bottom: 15px;
+            }
+            .progress-bar {
+                height: 25px;
+                border-radius: 5px;
+                text-align: center;
+                line-height: 25px;
+                color: white;
+                font-weight: bold;
+            }
+            .energy-flow-icon {
+                font-size: 40px;
+                margin-right: 15px;
+                float: left;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+
+            # Executive Summary Card
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.markdown('<h2>💰 Cost Summary</h2>', unsafe_allow_html=True)
+            
+            # Progress bar showing cost reduction
+            savings_percent = min(int(savings_percentage), 100)  # Cap at 100% for visual
+            
+            st.markdown(f"""
+            <div style="display: flex; align-items: center; margin-bottom: 20px;">
+                <div style="flex: 1;">
+                    <div class="big-font">Current Costs: <span class="costs">€{total_costs:.2f}</span></div>
+                    <div class="big-font">Savings: <span class="savings">€{total_combined_savings:.2f}</span></div>
+                    <div class="big-font">Final Costs: <span class="neutral">€{final_cost:.2f}</span></div>
+                </div>
+                <div style="flex: 1; text-align: center;">
+                    <div style="font-size: 24px; margin-bottom: 10px;">Cost Reduction</div>
+                    <div class="progress-container">
+                        <div class="progress-bar" style="width: {savings_percent}%; background-color: #4bb543;">
+                            {savings_percentage:.1f}%
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Savings Breakdown section
+            st.markdown('<h3>💸 Savings Breakdown</h3>', unsafe_allow_html=True)
+            
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric(
-                    "💰 Current Energy Costs", 
-                    f"€{total_energy_cost:.2f}",
-                    help="Your electricity costs without network tax"
-                )
+                st.markdown(f"""
+                <div class="summary-card" style="background-color: rgba(27, 108, 187, 0.1);">
+                    <h4>🌞 Solar Storage</h4>
+                    <div style="font-size: 22px;" class="highlight">€{total_net_savings:.2f}</div>
+                    <div>Savings from storing your solar energy</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
             with col2:
-                st.metric(
-                    "🏢 Network Tax", 
-                    f"€{total_tax:.2f}",
-                    help=f"Network operator tax based on {network_operator} rates"
-                )
+                st.markdown(f"""
+                <div class="summary-card" style="background-color: rgba(86, 69, 161, 0.1);">
+                    <h4>⚡ Grid Arbitrage</h4>
+                    <div style="font-size: 22px;" class="highlight">€{total_grid_arbitrage:.2f}</div>
+                    <div>Savings from smart grid energy buying</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
             with col3:
-                st.metric(
-                    "💶 Total Costs", 
-                    f"€{total_costs:.2f}",
-                    help="Total costs including network tax"
-                )
-
-            # Second row of metrics
-            col1, col2, col3 = st.columns(3)
+                st.markdown(f"""
+                <div class="summary-card" style="background-color: rgba(217, 120, 87, 0.1);">
+                    <h4>📉 Lost Solar Revenue</h4>
+                    <div style="font-size: 22px;" class="costs">-€{total_lost_revenue:.2f}</div>
+                    <div>Potential income lost from not selling solar back to grid</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Energy Flow & Costs Card
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.markdown('<h2>⚡ Energy & Cost Details</h2>', unsafe_allow_html=True)
+            
+            # Current cost breakdown
+            col1, col2 = st.columns(2)
             with col1:
-                st.metric(
-                    "💰 Current Costs", 
-                    f"€{total_costs:.2f}",
-                    help="Your total electricity costs with current setup"
+                st.markdown('<h3>Current Cost Structure</h3>', unsafe_allow_html=True)
+                fig = go.Figure()
+                fig.add_trace(go.Pie(
+                    labels=['Energy Cost', 'Network Tax'],
+                    values=[total_energy_cost, total_tax],
+                    hole=0.6,
+                    marker_colors=['#1b6cbb', '#d97857'],
+                    textinfo='label+percent',
+                    hoverinfo='label+value+percent',
+                    hovertemplate='<b>%{label}</b><br>€%{value:.2f}<br>%{percent}'
+                ))
+                fig.update_layout(
+                    showlegend=False,
+                    margin=dict(t=0, b=0, l=0, r=0),
+                    annotations=[dict(text=f'€{total_costs:.2f}', x=0.5, y=0.5, font_size=16, showarrow=False)]
                 )
-            with col2:
-                st.metric(
-                    "🌞 Solar Storage Savings", 
-                    f"€{total_net_savings:.2f}",
-                    help="Net savings from storing and using your solar energy"
-                )
-            with col3:
-                st.metric(
-                    "⚡ Grid Arbitrage Savings", 
-                    f"€{total_grid_arbitrage:.2f}",
-                    help="Additional savings from buying cheap grid energy"
-                )
+                st.plotly_chart(fig, use_container_width=True)
 
-            # Third row of metrics
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric(
-                    "💹 Total Combined Savings", 
-                    f"€{total_combined_savings:.2f}",
-                    delta=f"{savings_percentage:.1f}% of costs",
-                    help="Total savings from both solar storage and grid arbitrage"
-                )
             with col2:
-                st.metric(
-                    "📉 Lost Solar Revenue", 
-                    f"-€{total_lost_revenue:.2f}",
-                    help="Revenue lost from not selling solar energy back to grid"
-                )
-            with col3:
-                st.metric(
-                    "💸 Final Costs", 
-                    f"€{(total_costs - total_combined_savings):.2f}",
-                    help="Your estimated costs after all optimizations"
-                )
-
-            # Energy statistics
-            st.markdown("### ⚡ Energy Snapshot")
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric(
-                    "🔌 Grid Energy Used", 
-                    f"{total_supply:.1f} kWh",
-                    help="Energy bought from the power company"
-                )
-            with col2:
-                st.metric(
-                    "💡 Average Electricity Price", 
-                    f"€{avg_price:.3f}/kWh",
-                    help="Typical price you paid for grid energy"
-                )
-            with col3:
-                # Get GTV for the selected connection
+                # GTV Information
                 conn_details = meter_hierarchy[selected_conn_name]
                 gtv = conn_details.get('gtv', 'N/A')
-                st.metric(
-                    "⚡ Contracted Capacity (GTV)", 
-                    f"{gtv} kW" if gtv != 'N/A' else 'N/A',
-                    help="Gecontracteerd Transportvermogen - Your contracted grid capacity"
-                )
-            with col4:
-                st.metric(
-                    "📆 Period Covered", 
-                    f"{start_date.strftime('%d %b')} - {end_date.strftime('%d %b')}",
-                    help="Analysis time range"
-                )
-
+                
+                st.markdown('<h3>Key Energy Metrics</h3>', unsafe_allow_html=True)
+                st.markdown(f"""
+                <div style="padding: 10px; margin-bottom: 10px;">
+                    <div><b>🏢 Contracted Capacity (GTV):</b> {gtv} kW</div>
+                    <div style="font-size: 12px; color: #666;">Determines your network costs & capacity</div>
+                </div>
+                <div style="padding: 10px; margin-bottom: 10px;">
+                    <div><b>🔌 Grid Energy Used:</b> {total_supply:.1f} kWh</div>
+                    <div style="font-size: 12px; color: #666;">Energy bought from the grid</div>
+                </div>
+                <div style="padding: 10px; margin-bottom: 10px;">
+                    <div><b>🔄 Solar Energy Returned:</b> {total_return:.1f} kWh</div>
+                    <div style="font-size: 12px; color: #666;">Energy sold back to the grid</div>
+                </div>
+                <div style="padding: 10px;">
+                    <div><b>💡 Average Electricity Price:</b> €{avg_price:.3f}/kWh</div>
+                    <div style="font-size: 12px; color: #666;">Average price paid for grid energy</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # What this means for you
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.markdown('<h2>🎯 What This Means For You</h2>', unsafe_allow_html=True)
+            
+            # ROI and simple explanation
+            years_to_payback = 5  # This should be calculated based on battery cost and savings
+            monthly_savings = total_combined_savings / ((end_date - start_date).days / 30)
+            
+            st.markdown(f"""
+            <div style="display: flex; margin-bottom: 20px;">
+                <div class="energy-flow-icon">💰</div>
+                <div>
+                    <h3>Monthly Savings</h3>
+                    <p>With a battery system, you could save approximately <span class="highlight">€{monthly_savings:.2f}</span> per month.</p>
+                </div>
+            </div>
+            
+            <div style="display: flex; margin-bottom: 20px;">
+                <div class="energy-flow-icon">🔋</div>
+                <div>
+                    <h3>How It Works</h3>
+                    <p>Your battery stores excess solar energy during the day and uses it when electricity prices are high. 
+                    It can also buy cheap grid electricity at night to use during expensive periods.</p>
+                </div>
+            </div>
+            
+            <div style="display: flex;">
+                <div class="energy-flow-icon">📊</div>
+                <div>
+                    <h3>Grid Independence</h3>
+                    <p>Adding a battery gives you more independence from the grid and protects you from rising electricity prices.</p>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
             # Add location info if available
             if conn_details.get('address') and conn_details.get('city'):
                 st.caption(f"📍 Location: {conn_details['address']}, {conn_details['city']}")
