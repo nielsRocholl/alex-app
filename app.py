@@ -566,9 +566,9 @@ def main():
                 st.markdown("### Return on Investment")
                 
                 # Constants for ROI calculation
-                avg_battery_cost_per_kwh = 800  # € per kWh
-                estimated_installation_cost = 2000  # €
-                estimated_battery_lifetime = 10  # years
+                avg_battery_cost_per_kwh = 350  # € per kWh
+                estimated_installation_cost = 0  # €
+                estimated_battery_lifetime = 15  # years
                 
                 # Calculate ROI metrics
                 battery_cost = battery_capacity * avg_battery_cost_per_kwh + estimated_installation_cost
