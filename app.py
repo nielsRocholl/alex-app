@@ -208,8 +208,7 @@ def main():
             
             # Add a big, visible login button in the sidebar
             auth_url = authenticator.get_auth_url()
-            if st.button("Login with Google", type="primary", use_container_width=True):
-                st.switch_page(auth_url)
+            st.link_button("Login with Google", auth_url, type="primary", use_container_width=True)
 
     # Main content area - Only visible for authenticated users
     if st.session_state.get("connected"):
