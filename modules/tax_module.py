@@ -1,5 +1,7 @@
 from typing import Dict, Literal, Optional
 import pandas as pd
+from datetime import time
+import holidays
 
 class NetworkTaxCalculator:
     """Calculator for network operator specific energy taxes."""
@@ -44,6 +46,43 @@ class NetworkTaxCalculator:
         return 0.0
     
     @staticmethod
+    def determine_rate_type(timestamp) -> str:
+        """
+        Determine the rate type based on the timestamp.
+        
+        Normal rate: working days 7:00 AM - 11:00 PM
+        Low rate: working days 11:00 PM - 7:00 AM
+        Low rate: All day on weekends and public holidays
+        
+        Args:
+            timestamp: The timestamp to evaluate
+            
+        Returns:
+            rate_type: "normal" or "low"
+        """
+        # Convert to pandas Timestamp if not already
+        ts = pd.Timestamp(timestamp)
+        
+        # Check if it's a weekend (Saturday = 5, Sunday = 6)
+        if ts.dayofweek >= 5:
+            return "low"
+        
+        # Check if it's a holiday in the Netherlands
+        nl_holidays = holidays.NL()
+        if ts.date() in nl_holidays:
+            return "low"
+        
+        # Check time of day
+        ts_time = ts.time()
+        morning_start = time(7, 0)  # 7:00 AM
+        night_start = time(23, 0)   # 11:00 PM
+        
+        if morning_start <= ts_time < night_start:
+            return "normal"
+        else:
+            return "low"
+    
+    @staticmethod
     def calculate_tax(
         usage_df: pd.DataFrame,
         operator: str,
@@ -58,7 +97,7 @@ class NetworkTaxCalculator:
             operator: Network operator name
             gtv: Contracted capacity in kW
             rate_schedule: Optional dict mapping timestamps to rate types ("normal" or "low")
-                         If None, assumes normal rate for all times
+                         If None, determines rate types based on time of day rules
         
         Returns:
             DataFrame with tax calculations
@@ -67,10 +106,12 @@ class NetworkTaxCalculator:
         supply_df = usage_df[usage_df['type'] == 'supply'].copy()
         
         if rate_schedule is None:
-            # Use normal rate for all times if no schedule provided
-            supply_df['rate_type'] = 'normal'
+            # Determine rate type based on timestamp
+            supply_df['rate_type'] = supply_df['timestamp'].apply(
+                NetworkTaxCalculator.determine_rate_type
+            )
         else:
-            # Assign rate type based on schedule
+            # Assign rate type based on provided schedule
             supply_df['rate_type'] = supply_df['timestamp'].map(
                 lambda x: rate_schedule.get(pd.Timestamp(x), 'normal')
             )

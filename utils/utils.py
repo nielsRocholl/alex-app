@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 from modules.kenter_module import KenterAPI
 from plotly.subplots import make_subplots
+import numpy as np
 
 
 def validate_dates(start_date, end_date):
@@ -23,8 +24,20 @@ def validate_dates(start_date, end_date):
     return True, ""
 
 
-def calculate_daily_costs(usage_df, price_df, tax_df=None):
-    """Calculate the daily energy costs including network tax if provided."""
+def calculate_daily_costs(usage_df, price_df, tax_df=None, energy_flows_df=None):
+    """
+    Calculate the daily energy costs including network tax if provided.
+    
+    Args:
+        usage_df: DataFrame with energy usage data
+        price_df: DataFrame with energy prices
+        tax_df: Optional DataFrame with tax rates
+        energy_flows_df: Optional DataFrame with detailed energy flow information from battery simulation
+                       Includes tracking of energy sources (solar vs grid)
+    
+    Returns:
+        DataFrame with daily costs
+    """
     # Ensure we're working with copies
     usage_df = usage_df.copy()
     price_df = price_df.copy()
@@ -33,21 +46,78 @@ def calculate_daily_costs(usage_df, price_df, tax_df=None):
     usage_df['timestamp'] = pd.to_datetime(usage_df['timestamp'])
     price_df['timestamp'] = pd.to_datetime(price_df['timestamp'])
     
-    # Get only supply data
+    # Get only supply data (energy consumed from grid)
     supply_df = usage_df[usage_df['type'] == 'supply'].copy()
     
-    # Merge with prices
-    costs = pd.merge(supply_df, price_df[['timestamp', 'price']], on='timestamp', how='left')
+    # If we have energy flows data from battery simulation, we can be more precise about
+    # which energy should be taxed
+    if energy_flows_df is not None:
+        energy_flows_df = energy_flows_df.copy()
+        energy_flows_df['timestamp'] = pd.to_datetime(energy_flows_df['timestamp'])
+        
+        # Create an adjusted supply dataframe that only includes grid-sourced energy
+        # This is for tax calculation purposes
+        adjusted_supply = []
+        
+        # Go through each timestamp in the supply data
+        for idx, row in supply_df.iterrows():
+            ts = row['timestamp']
+            # Find matching row in energy flows
+            flow = energy_flows_df[energy_flows_df['timestamp'] == ts]
+            
+            if not flow.empty:
+                # We have battery data for this timestamp
+                # Only apply tax to grid-sourced energy (direct or via battery)
+                grid_energy = flow['grid_origin_to_house'].values[0]
+                
+                # Only include grid-sourced energy for tax calculation
+                if grid_energy > 0:
+                    adjusted_supply.append({
+                        'timestamp': ts,
+                        'value': grid_energy,
+                        'type': 'grid_supply'  # Mark explicitly as grid supply
+                    })
+            else:
+                # No battery data, assume all supply is from grid (original behavior)
+                adjusted_supply.append({
+                    'timestamp': row['timestamp'],
+                    'value': row['value'],
+                    'type': 'grid_supply'
+                })
+        
+        # Convert to DataFrame
+        if adjusted_supply:
+            taxable_supply_df = pd.DataFrame(adjusted_supply)
+        else:
+            # Create empty DataFrame with correct columns if no records
+            taxable_supply_df = pd.DataFrame(columns=['timestamp', 'value', 'type'])
+    else:
+        # Without energy flow data, assume all supply is taxable (original behavior)
+        taxable_supply_df = supply_df.copy()
+        taxable_supply_df['type'] = 'grid_supply'  # Mark as grid supply for clarity
     
-    # Calculate energy cost per interval
+    # Merge with prices for all supply (both solar and grid for energy cost)
+    costs = pd.merge(supply_df, price_df[['timestamp', 'price']], on='timestamp', how='left')
     costs['energy_cost'] = costs['value'] * costs['price']
     
-    # Add tax if provided
+    # Add tax if provided - but only on grid-sourced energy
     if tax_df is not None:
         tax_df = tax_df.copy()
         tax_df['timestamp'] = pd.to_datetime(tax_df['timestamp'])
-        costs = pd.merge(costs, tax_df[['timestamp', 'tax_amount']], on='timestamp', how='left')
-        costs['tax'] = costs['tax_amount']
+        
+        # Merge tax data with taxable supply (grid-sourced energy only)
+        taxable_costs = pd.merge(taxable_supply_df, tax_df[['timestamp', 'tax_amount', 'tax_rate']], 
+                                on='timestamp', how='left')
+        
+        # Calculate tax based on the value in taxable_supply_df
+        taxable_costs['tax'] = taxable_costs['value'] * (taxable_costs['tax_rate'] / 100)
+        
+        # Aggregate tax by timestamp
+        tax_by_timestamp = taxable_costs.groupby('timestamp')['tax'].sum().reset_index()
+        
+        # Merge aggregated tax back to the original costs
+        costs = pd.merge(costs, tax_by_timestamp, on='timestamp', how='left')
+        costs['tax'] = costs['tax'].fillna(0)
     else:
         costs['tax'] = 0
     
@@ -205,18 +275,36 @@ def create_plot(usage_df, price_df):
 
 def create_cost_savings_plot(daily_costs, savings):
     """Create an intuitive, modern visualization of potential savings"""
+    # Ensure daily_costs and savings are not empty
+    if daily_costs.empty or savings.empty:
+        return go.Figure()
+    
+    # Create copies to avoid modifying originals
+    daily_costs = daily_costs.copy()
+    savings = savings.copy()
+    
+    # Ensure date/timestamp columns are datetime type
+    if 'date' in daily_costs.columns:
+        daily_costs['date'] = pd.to_datetime(daily_costs['date'])
+    
+    if 'timestamp' in savings.columns:
+        savings['timestamp'] = pd.to_datetime(savings['timestamp'])
+        
+        # Create a date column in savings to match daily_costs
+        savings['date'] = savings['timestamp'].dt.date
+        savings['date'] = pd.to_datetime(savings['date'])
+    
+    # Merge data frames using the properly converted date columns
     merged_data = pd.merge(
         daily_costs,
         savings,
-        left_on='date',
-        right_on='timestamp',
+        on='date',  # Now both have compatible 'date' columns
         how='outer'
     )
     
     # Calculate different cost scenarios
     merged_data['cost_with_solar_only'] = merged_data['cost'] - merged_data['net_savings']
-    merged_data['cost_with_grid_arbitrage'] = merged_data['cost'] - merged_data['grid_arbitrage_savings']
-    merged_data['final_cost'] = merged_data['cost_with_solar_only'] - merged_data['grid_arbitrage_savings']
+    merged_data['final_cost'] = merged_data['cost_with_solar_only']
     
     fig = go.Figure()
 
@@ -230,22 +318,6 @@ def create_cost_savings_plot(daily_costs, savings):
             opacity=0.8
         ),
         hovertemplate="<b>Current Cost</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>"
-    ))
-
-    # Cost with only grid arbitrage
-    fig.add_trace(go.Scatter(
-        x=merged_data['date'],
-        y=merged_data['cost_with_grid_arbitrage'],
-        name='With Grid Arbitrage',
-        line=dict(color='#2EC4B6', width=3, dash='dash'),  # Teal for grid arbitrage
-        mode='lines+markers',
-        marker=dict(
-            symbol='circle',
-            size=8,
-            color='#2EC4B6',
-            line=dict(color='white', width=1)
-        ),
-        hovertemplate="<b>With Grid Arbitrage</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>"
     ))
 
     # Cost with only solar optimization
@@ -262,22 +334,6 @@ def create_cost_savings_plot(daily_costs, savings):
             line=dict(color='white', width=1)
         ),
         hovertemplate="<b>With Solar Storage</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>"
-    ))
-
-    # Final cost after all optimizations
-    fig.add_trace(go.Scatter(
-        x=merged_data['date'],
-        y=merged_data['final_cost'],
-        name='Final Cost',
-        line=dict(color='#38B000', width=3),  # Green for final cost
-        mode='lines+markers',
-        marker=dict(
-            symbol='square',
-            size=8,
-            color='#38B000',
-            line=dict(color='white', width=1)
-        ),
-        hovertemplate="<b>Final Cost</b><br>%{x|%b %d}<br>€%{y:.2f}<extra></extra>"
     ))
 
     fig.update_layout(
@@ -317,24 +373,41 @@ def create_cost_savings_plot(daily_costs, savings):
 
 def create_cost_savings_plot_v2(daily_costs, savings):
     """Create an enhanced visualization of cost savings using subplots for clarity"""
+    # Ensure daily_costs and savings are not empty
+    if daily_costs.empty or savings.empty:
+        return go.Figure()
+    
+    # Create copies to avoid modifying originals
+    daily_costs = daily_costs.copy()
+    savings = savings.copy()
+    
+    # Ensure date/timestamp columns are datetime type
+    if 'date' in daily_costs.columns:
+        daily_costs['date'] = pd.to_datetime(daily_costs['date'])
+    
+    if 'timestamp' in savings.columns:
+        savings['timestamp'] = pd.to_datetime(savings['timestamp'])
+        
+        # Create a date column in savings to match daily_costs
+        savings['date'] = savings['timestamp'].dt.date
+        savings['date'] = pd.to_datetime(savings['date'])
+    
+    # Merge data frames using the properly converted date columns
     merged_data = pd.merge(
         daily_costs,
         savings,
-        left_on='date',
-        right_on='timestamp',
+        on='date',  # Now both have compatible 'date' columns
         how='outer'
     )
     
     # Calculate different cost scenarios
     merged_data['cost_with_solar_only'] = merged_data['cost'] - merged_data['net_savings']
-    merged_data['cost_with_grid_arbitrage'] = merged_data['cost'] - merged_data['grid_arbitrage_savings']
-    merged_data['final_cost'] = merged_data['cost_with_solar_only'] - merged_data['grid_arbitrage_savings']
+    merged_data['final_cost'] = merged_data['cost_with_solar_only']
     
     # Calculate daily savings for the waterfall
     merged_data['solar_savings'] = merged_data['net_savings']
-    merged_data['grid_savings'] = merged_data['grid_arbitrage_savings']
     merged_data['lost_revenue'] = merged_data['lost_revenue']
-    merged_data['total_savings'] = merged_data['solar_savings'] + merged_data['grid_savings'] - merged_data['lost_revenue']
+    merged_data['total_savings'] = merged_data['solar_savings'] - merged_data['lost_revenue']
     
     # Create figure with subplots
     fig = make_subplots(
@@ -386,10 +459,9 @@ def create_cost_savings_plot_v2(daily_costs, savings):
     )
 
     # Bottom plot: Daily savings breakdown
-    colors = ['#4361EE', '#2EC4B6', '#FF6B6B']  # Blue, Teal, Coral
+    colors = ['#4361EE', '#FF6B6B']  # Blue, Coral
     savings_data = [
         ('Solar Storage Savings', merged_data['solar_savings'].sum()),
-        ('Grid Arbitrage Savings', merged_data['grid_savings'].sum()),
         ('Lost Solar Revenue', -merged_data['lost_revenue'].sum())
     ]
     
@@ -398,19 +470,17 @@ def create_cost_savings_plot_v2(daily_costs, savings):
         go.Waterfall(
             name="Savings Breakdown",
             orientation="v",
-            measure=["relative", "relative", "relative", "total"],
-            x=["Solar Storage<br>Savings", "Grid Arbitrage<br>Savings", "Lost Solar<br>Revenue", "Total<br>Savings"],
-            textposition=["inside", "inside", "inside", "inside"],
+            measure=["relative", "relative", "total"],
+            x=["Solar Storage<br>Savings", "Lost Solar<br>Revenue", "Total<br>Savings"],
+            textposition=["inside", "inside", "inside"],
             text=[f"€{val:.2f}" for val in [
                 savings_data[0][1],
                 savings_data[1][1],
-                savings_data[2][1],
                 sum(x[1] for x in savings_data)
             ]],
             y=[
                 savings_data[0][1],
                 savings_data[1][1],
-                savings_data[2][1],
                 0
             ],
             connector={"line": {"color": "#2EC4B6"}},  # Teal for connectors
@@ -493,30 +563,46 @@ def create_echarts_cost_savings_plot(daily_costs, savings):
     import json
     import numpy as np
     
-    # Merge data frames
+    # Ensure daily_costs and savings are not empty
+    if daily_costs.empty or savings.empty:
+        return {}
+    
+    # Create copies to avoid modifying originals
+    daily_costs = daily_costs.copy()
+    savings = savings.copy()
+    
+    # Ensure date/timestamp columns are datetime type
+    if 'date' in daily_costs.columns:
+        daily_costs['date'] = pd.to_datetime(daily_costs['date'])
+    
+    if 'timestamp' in savings.columns:
+        savings['timestamp'] = pd.to_datetime(savings['timestamp'])
+        
+        # Create a date column in savings to match daily_costs
+        savings['date'] = savings['timestamp'].dt.date
+        savings['date'] = pd.to_datetime(savings['date'])
+    
+    # Merge data frames using the properly converted date columns
     merged_data = pd.merge(
         daily_costs,
         savings,
-        left_on='date',
-        right_on='timestamp',
+        on='date',  # Now both have compatible 'date' columns
         how='outer'
     )
     
     # Drop rows with NaN values to ensure clean data
-    merged_data = merged_data.dropna(subset=['cost', 'net_savings', 'grid_arbitrage_savings'])
+    merged_data = merged_data.dropna(subset=['cost', 'net_savings'])
     
     # Calculate different cost scenarios
     merged_data['cost_with_solar_only'] = merged_data['cost'] - merged_data['net_savings']
-    merged_data['cost_with_grid_arbitrage'] = merged_data['cost'] - merged_data['grid_arbitrage_savings']
-    merged_data['final_cost'] = merged_data['cost_with_solar_only'] - merged_data['grid_arbitrage_savings']
-    merged_data['daily_savings'] = merged_data['cost'] - merged_data['final_cost']
+    merged_data['final_cost'] = merged_data['cost_with_solar_only']
     
     # Calculate 7-day moving average of daily savings
     window_size = min(7, len(merged_data))
     if window_size > 0:
-        merged_data['savings_ma'] = merged_data['daily_savings'].rolling(window=window_size, min_periods=1).mean()
+        merged_data['savings_ma'] = merged_data['net_savings'].rolling(window=window_size, min_periods=1).mean()
     else:
-        merged_data['savings_ma'] = merged_data['daily_savings']
+        merged_data['savings_ma'] = merged_data['net_savings']
     
     # Format dates for display
     x_data = [d.strftime('%b %d') for d in merged_data['date']]
@@ -528,7 +614,7 @@ def create_echarts_cost_savings_plot(daily_costs, savings):
     
     current_cost = safe_list(merged_data['cost'])
     final_cost = safe_list(merged_data['final_cost'])
-    daily_savings = safe_list(merged_data['daily_savings'])
+    daily_savings = safe_list(merged_data['net_savings'])
     savings_trend = safe_list(merged_data['savings_ma'])
     
     # Modern colors for 2025 tech aesthetic
@@ -738,22 +824,19 @@ def create_savings_breakdown_chart(savings):
     
     # Calculate total values
     total_solar_savings = savings['net_savings'].sum()
-    total_grid_savings = savings['grid_arbitrage_savings'].sum()
     total_lost_revenue = savings['lost_revenue'].sum()
-    total_net_savings = total_solar_savings + total_grid_savings - total_lost_revenue
+    total_net_savings = total_solar_savings - total_lost_revenue
     
     # Format values for display
     def format_value(val):
         return round(float(val), 2)
     
     solar_savings = format_value(total_solar_savings)
-    grid_savings = format_value(total_grid_savings)
     lost_revenue = format_value(total_lost_revenue)
     net_savings = format_value(total_net_savings)
     
     # Modern colors
     color_solar = '#4361EE'    # Blue for solar savings
-    color_grid = '#2EC4B6'     # Teal for grid savings
     color_lost = '#FF6B6B'     # Coral for lost revenue
     color_total = '#38B000'    # Green for total
     
@@ -776,7 +859,7 @@ def create_savings_breakdown_chart(savings):
         },
         "xAxis": {
             "type": "category",
-            "data": ["Solar Savings", "Grid Arbitrage", "Lost Revenue", "Net Savings"],
+            "data": ["Solar Savings", "Lost Revenue", "Net Savings"],
             "axisLabel": {
                 "interval": 0,
                 "fontSize": 12,
@@ -828,13 +911,6 @@ def create_savings_breakdown_chart(savings):
                         }
                     },
                     {
-                        "value": grid_savings,
-                        "itemStyle": {
-                            "color": color_grid,
-                            "borderRadius": [8, 8, 0, 0]  # Curved top corners
-                        }
-                    },
-                    {
                         "value": -lost_revenue,
                         "itemStyle": {
                             "color": color_lost,
@@ -855,3 +931,205 @@ def create_savings_breakdown_chart(savings):
     }
     
     return options
+
+def create_battery_level_plot(energy_flows_df, battery_capacity):
+    """
+    Create a plot showing battery level over time.
+    
+    Args:
+        energy_flows_df: DataFrame with energy flow data including battery_level
+        battery_capacity: The maximum capacity of the battery in kWh
+        
+    Returns:
+        A plotly figure object showing battery level over time
+    """
+    if energy_flows_df is None or energy_flows_df.empty or 'battery_level' not in energy_flows_df.columns:
+        # Return empty figure if no data
+        return go.Figure().update_layout(
+            title="No battery level data available",
+            xaxis_title="Time",
+            yaxis_title="Battery Level (kWh)",
+            height=400
+        )
+    
+    # Make a copy to avoid modifying the original
+    df = energy_flows_df.copy()
+    
+    # Ensure timestamp is datetime
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    
+    # Sort by timestamp
+    df = df.sort_values('timestamp')
+    
+    # Add title with key information
+    total_solar_to_grid = df['solar_to_grid'].sum()
+    total_solar_to_battery = df['solar_to_battery'].sum()
+    title = f"Battery Level Over Time (Hourly)"
+    
+    # Count occurrences of each limitation type
+    if 'charge_limited_by' in df.columns:
+        limited_by_space = (df['charge_limited_by'] == 'battery_space').sum()
+        limited_by_rate = (df['charge_limited_by'] == 'charging_rate').sum()
+        limited_by_taper = (df['charge_limited_by'] == 'taper').sum()
+        
+        limitations = []
+        if limited_by_space > 0:
+            limitations.append(f"Battery full ({limited_by_space} intervals)")
+        if limited_by_rate > 0:
+            limitations.append(f"Max charge rate ({limited_by_rate} intervals)")
+        if limited_by_taper > 0:
+            limitations.append(f"Charge tapering ({limited_by_taper} intervals)")
+            
+        if limitations:
+            title += f"<br><span style='font-size:12px'>Solar to grid due to: {', '.join(limitations)}</span>"
+    
+    # Add charge rate info if available (from the first day's metrics)
+    if 'date' in df.columns and len(df) > 0:
+        first_date = df['date'].iloc[0]
+        first_date_transactions = df[df['date'] == first_date]
+        if len(first_date_transactions) > 0 and 'charge_rate_info' in first_date_transactions.iloc[0]:
+            charging_info = first_date_transactions.iloc[0]['charge_rate_info']
+            title += f"<br><span style='font-size:12px'>{charging_info}</span>"
+    
+    # Resample to hourly if data is more granular
+    # We'll use the mean battery level for each hour
+    df['hour'] = df['timestamp'].dt.floor('H')
+    hourly_data = df.groupby('hour').agg({
+        'battery_level': 'mean',
+        'solar_energy_in_battery': 'mean',
+        'grid_energy_in_battery': 'mean',
+        'solar_to_grid': 'sum',
+        'solar_to_battery': 'sum'
+    }).reset_index()
+    
+    # Calculate percentage of capacity
+    hourly_data['battery_pct'] = (hourly_data['battery_level'] / battery_capacity) * 100
+    
+    # Fix: Filter out insignificant grid energy amounts - likely rounding errors
+    # Only show grid energy if it's more than 1% of the battery level
+    grid_threshold = 0.01
+    has_significant_grid_energy = (hourly_data['grid_energy_in_battery'] / hourly_data['battery_level'] > grid_threshold).any()
+    
+    if not has_significant_grid_energy:
+        # If no significant grid energy, set it to zero and make solar = battery level
+        hourly_data['grid_energy_in_battery'] = 0
+        hourly_data['solar_energy_in_battery'] = hourly_data['battery_level']
+    
+    # Calculate percentage of battery that is from solar vs grid
+    hourly_data['solar_pct'] = (hourly_data['solar_energy_in_battery'] / hourly_data['battery_level']) * 100
+    hourly_data['solar_pct'] = hourly_data['solar_pct'].fillna(0).clip(0, 100)
+    hourly_data['grid_pct'] = 100 - hourly_data['solar_pct']
+    
+    # Create the figure
+    fig = go.Figure()
+    
+    # Add solar to grid as bar chart on secondary y-axis
+    if hourly_data['solar_to_grid'].sum() > 0:
+        fig.add_trace(go.Bar(
+            x=hourly_data['hour'],
+            y=hourly_data['solar_to_grid'],
+            name='Solar to Grid',
+            marker_color='rgba(255, 153, 51, 0.7)',  # Orange
+            yaxis='y2',
+            hovertemplate='<b>%{x|%b %d, %H:%M}</b><br>Solar to Grid: %{y:.2f} kWh<extra></extra>'
+        ))
+    
+    # Add battery level line
+    fig.add_trace(go.Scatter(
+        x=hourly_data['hour'],
+        y=hourly_data['battery_level'],
+        name='Battery Level (kWh)',
+        line=dict(color='#4361EE', width=3),
+        hovertemplate='<b>%{x|%b %d, %H:%M}</b><br>Battery Level: %{y:.2f} kWh<br>(%{customdata[0]:.1f}% of capacity)<extra></extra>',
+        customdata=np.column_stack((hourly_data['battery_pct'],))
+    ))
+    
+    # Add solar energy component area
+    fig.add_trace(go.Scatter(
+        x=hourly_data['hour'],
+        y=hourly_data['solar_energy_in_battery'],
+        name='Solar Energy in Battery',
+        fill='tozeroy',
+        mode='none',
+        fillcolor='rgba(255, 215, 0, 0.3)',  # Golden yellow with transparency
+        hovertemplate='<b>%{x|%b %d, %H:%M}</b><br>Solar Energy: %{y:.2f} kWh<br>(%{customdata[0]:.1f}% of battery)<extra></extra>',
+        customdata=np.column_stack((hourly_data['solar_pct'],))
+    ))
+    
+    # Only add grid energy trace if there's significant grid energy
+    if has_significant_grid_energy:
+        # Add grid energy component area
+        fig.add_trace(go.Scatter(
+            x=hourly_data['hour'],
+            y=hourly_data['grid_energy_in_battery'],
+            name='Grid Energy in Battery',
+            fill='tonexty',
+            mode='none',
+            fillcolor='rgba(100, 149, 237, 0.3)',  # Cornflower blue with transparency
+            hovertemplate='<b>%{x|%b %d, %H:%M}</b><br>Grid Energy: %{y:.2f} kWh<br>(%{customdata[0]:.1f}% of battery)<extra></extra>',
+            customdata=np.column_stack((hourly_data['grid_pct'],))
+        ))
+    
+    # Add a reference line for battery capacity
+    fig.add_shape(
+        type="line",
+        x0=hourly_data['hour'].min(),
+        y0=battery_capacity,
+        x1=hourly_data['hour'].max(),
+        y1=battery_capacity,
+        line=dict(
+            color="rgba(255, 0, 0, 0.5)",
+            width=2,
+            dash="dash",
+        )
+    )
+    
+    # Add annotation for battery capacity
+    fig.add_annotation(
+        x=hourly_data['hour'].max(),
+        y=battery_capacity,
+        text=f"Capacity: {battery_capacity} kWh",
+        showarrow=False,
+        yshift=10,
+        xshift=-5,
+        align="right",
+        bgcolor="rgba(255, 255, 255, 0.8)",
+        bordercolor="rgba(0, 0, 0, 0.1)",
+        font=dict(size=10)
+    )
+    
+    # Update layout
+    fig.update_layout(
+        title=dict(
+            text=title,
+            x=0.5,
+            xanchor='center',
+            y=0.95,
+            yanchor='top',
+            font=dict(size=14)
+        ),
+        xaxis_title="Time",
+        yaxis_title="Energy (kWh)",
+        yaxis2=dict(
+            title="Solar to Grid (kWh)",
+            overlaying="y",
+            side="right"
+        ),
+        legend_title="Legend",
+        hovermode="x unified",
+        height=500,
+        template="plotly_white",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.2,  # Move legend below the plot
+            xanchor="center",
+            x=0.5,
+            bgcolor="rgba(255, 255, 255, 0.8)",
+            bordercolor="rgba(0, 0, 0, 0.1)",
+            borderwidth=1
+        ),
+        margin=dict(t=120, l=60, r=60, b=80)  # Increased margins for better spacing
+    )
+    
+    return fig
